@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+data/atrnet/images/
+models/saved/
+logs/
+*.log
+.DS_Store

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Defense ML — Experiments</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    /* ── Page layout ── */
+    .exp-body { padding: 20px; overflow-y: auto; height: calc(100vh - 44px); }
+
+    /* ── Experiments table ── */
+    .exp-table { width: 100%; border-collapse: collapse; margin-bottom: 32px; }
+    .exp-table th { background: #1a237e; color: white; padding: 8px 12px; text-align: left; font-weight: 600; }
+    .exp-table td { padding: 8px 12px; border-bottom: 1px solid #e0e0e0; }
+    .exp-table tr:hover td { background: #f5f5f5; cursor: pointer; }
+    .exp-table tr.selected td { background: #e8eaf6; }
+    .accuracy-good    { color: #388e3c; font-weight: 600; }
+    .accuracy-ok      { color: #f57c00; font-weight: 600; }
+    .accuracy-poor    { color: #c62828; font-weight: 600; }
+
+    /* ── Detail panel ── */
+    #detail-panel { display: none; }
+    .detail-header { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: #1a237e; }
+    .detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: start; }
+
+    /* ── Confusion matrix ── */
+    .cm-wrap { overflow-x: auto; }
+    .cm-table { border-collapse: collapse; font-size: 12px; }
+    .cm-table th { padding: 6px 10px; background: #f5f5f5; font-weight: 600; text-align: center; }
+    .cm-table td { padding: 6px 10px; text-align: center; border: 1px solid #e0e0e0; cursor: pointer; min-width: 70px; }
+    .cm-table td:hover { outline: 2px solid #1a237e; }
+    .cm-table .row-label { background: #f5f5f5; font-weight: 600; text-align: right; cursor: default; }
+    .cm-table .cm-corner { background: #f5f5f5; }
+    .cm-diagonal { background: #c8e6c9; }
+    .cm-off { background: #ffcdd2; }
+    .cm-zero { color: #aaa; }
+    .cm-selected { outline: 3px solid #1a237e !important; }
+
+    /* ── Per-class metrics ── */
+    .metrics-table { border-collapse: collapse; font-size: 12px; }
+    .metrics-table th { background: #f5f5f5; padding: 6px 10px; font-weight: 600; text-align: right; }
+    .metrics-table th:first-child { text-align: left; }
+    .metrics-table td { padding: 6px 10px; border-bottom: 1px solid #e0e0e0; text-align: right; }
+    .metrics-table td:first-child { text-align: left; font-weight: 600; }
+
+    /* ── Image drill-down ── */
+    #drill-panel { margin-top: 24px; display: none; }
+    .drill-header { font-size: 14px; font-weight: 600; margin-bottom: 12px; padding: 8px 12px; background: #e8eaf6; border-radius: 4px; }
+    .drill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+    .drill-card { border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden; background: white; }
+    .drill-card img { width: 100%; height: 130px; object-fit: cover; display: block; }
+    .drill-card-info { padding: 4px 6px; font-size: 11px; color: #555; }
+    .drill-card-conf { font-weight: 600; }
+    .conf-correct { color: #388e3c; }
+    .conf-wrong   { color: #c62828; }
+    .drill-loading { color: #888; padding: 16px; }
+
+    /* ── Progress panel ── */
+    .job-card { background:#e8f5e9; border:1px solid #a5d6a7; border-radius:6px;
+                padding:10px 14px; margin-bottom:8px; display:flex; align-items:center; gap:16px; }
+    .job-card.completed { background:#f5f5f5; border-color:#ccc; }
+    .job-name  { font-weight:600; min-width:200px; }
+    .job-epoch { color:#1a237e; font-weight:600; min-width:90px; }
+    .job-acc   { color:#388e3c; font-weight:600; min-width:80px; }
+    .job-eta   { color:#888; font-size:12px; }
+    .job-bar-wrap { flex:1; background:#c8e6c9; border-radius:4px; height:8px; min-width:100px; }
+    .job-bar   { background:#388e3c; height:8px; border-radius:4px; transition:width 0.5s; }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header class="app-header">
+    <span class="app-title">Defense ML Viewer</span>
+    <div class="header-nav">
+      <a class="nav-btn" href="/">Image Viewer</a>
+      <a class="nav-btn active" href="/experiments">Experiments</a>
+    </div>
+  </header>
+
+  <div class="exp-body">
+
+    <!-- Running jobs panel -->
+    <div id="progress-panel" style="display:none; margin-bottom:20px;">
+      <h3 style="margin-bottom:8px; color:#1a237e;">Currently Running</h3>
+      <div id="progress-jobs"></div>
+    </div>
+
+    <!-- Experiments list -->
+    <h2 style="margin-bottom:12px; color:#1a237e;">Experiments</h2>
+    <table class="exp-table" id="exp-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Description</th>
+          <th>Config</th>
+          <th>Q / Ep</th>
+          <th>Precision</th>
+          <th>Recall</th>
+          <th>F1</th>
+          <th>Test N</th>
+          <th>Total N</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody id="exp-tbody">
+        <tr><td colspan="11" style="color:#888">Loading...</td></tr>
+      </tbody>
+    </table>
+
+    <!-- Experiment detail -->
+    <div id="detail-panel">
+      <div class="detail-header" id="detail-title">—</div>
+
+      <div class="detail-grid">
+
+        <!-- Confusion matrix -->
+        <div>
+          <div style="font-weight:600; margin-bottom:8px;">
+            Confusion matrix
+            <span style="font-weight:400; color:#888; font-size:11px;">
+              — rows = true class, columns = predicted class. Click a cell to see images.
+            </span>
+          </div>
+          <div class="cm-wrap" id="cm-wrap">Loading...</div>
+        </div>
+
+        <!-- Per-class metrics -->
+        <div>
+          <div style="font-weight:600; margin-bottom:8px;">Per-class metrics (test set)</div>
+          <div id="metrics-wrap">Loading...</div>
+        </div>
+
+      </div><!-- end detail-grid -->
+
+      <!-- Image drill-down -->
+      <div id="drill-panel">
+        <div class="drill-header" id="drill-header">—</div>
+        <div class="drill-grid" id="drill-grid"></div>
+      </div>
+
+    </div><!-- end detail-panel -->
+
+  </div><!-- end exp-body -->
+</div>
+
+<script>
+// ── Load experiments list ─────────────────────────────────────────────────────
+async function loadExperiments() {
+  const resp = await fetch('/api/experiments');
+  const data = await resp.json();
+  const tbody = document.getElementById('exp-tbody');
+  if (!data.experiments.length) {
+    tbody.innerHTML = '<tr><td colspan="14" style="color:#888">No experiments yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.experiments.map(e => {
+    const prec  = e.test_precision != null ? (e.test_precision * 100).toFixed(1) + '%' : '—';
+    const rec   = e.test_recall    != null ? (e.test_recall    * 100).toFixed(1) + '%' : '—';
+    const f1    = e.test_f1        != null ? (e.test_f1        * 100).toFixed(1) + '%' : '—';
+    const imgs  = e.test_images    != null ? e.test_images.toLocaleString()  : '—';
+    const total = e.total_images   != null ? e.total_images.toLocaleString() : '—';
+    const f1cls = e.test_f1 >= 0.85 ? 'accuracy-good' : e.test_f1 >= 0.70 ? 'accuracy-ok' : 'accuracy-poor';
+    const qep   = `q${e.quality_min} / ${e.epochs}ep`;
+
+    // Build description: compact model + class count + meaningful flags
+    const model = {
+      'bioclip_frozen':    'BC1',
+      'bioclip_finetuned': 'BC1-ft',
+      'bioclip2_frozen':   'BC2',
+      'efficientnet_b2':   'ENet-B2',
+      'resnet50':          'ResNet-50',
+    }[e.model_type] || (e.model_type || '?');
+
+    // Parse class count from notes: classes=['Foo', 'Bar', ...]
+    let nClasses = null;
+    if (e.notes) {
+      const m = e.notes.match(/classes=\[([^\]]+)\]/);
+      if (m) nClasses = m[1].split(',').length;
+    }
+
+    // Meaningful flags only — things NOT obvious from other columns
+    const flags = [];
+    const nm = (e.name || '').toLowerCase();
+    if (nm.includes('occurrence') || nm.includes('occ_split')) flags.push('occ-split');
+    if (nm.includes('unite'))                                   flags.push('UNITE');
+    if (nm.includes('augment'))                                 flags.push('aug');
+    if (nm.includes('zeroshot') || nm.includes('zero_shot'))   flags.push('zero-shot');
+
+    const parts = [model];
+    if (nClasses) parts.push(nClasses + ' cls');
+    if (flags.length) parts.push(flags.join('+'));
+    const desc = parts.join(' · ');
+
+    return `<tr onclick="loadDetail(${e.id})" data-id="${e.id}">
+      <td>${e.id}</td>
+      <td>${e.name}</td>
+      <td style="color:#555; font-size:12px;">${desc}</td>
+      <td>${e.config_name}</td>
+      <td style="color:#888; font-size:12px;">${qep}</td>
+      <td>${prec}</td>
+      <td>${rec}</td>
+      <td class="${f1cls}">${f1}</td>
+      <td>${imgs}</td>
+      <td>${total}</td>
+      <td>${e.created_at ? e.created_at.slice(0,10) : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Load experiment detail ────────────────────────────────────────────────────
+async function loadDetail(expId) {
+  // Highlight selected row
+  document.querySelectorAll('#exp-tbody tr').forEach(r =>
+    r.classList.toggle('selected', parseInt(r.dataset.id) === expId));
+
+  document.getElementById('detail-panel').style.display = 'block';
+  document.getElementById('drill-panel').style.display = 'none';
+  document.getElementById('cm-wrap').textContent = 'Loading...';
+  document.getElementById('metrics-wrap').textContent = 'Loading...';
+
+  const resp = await fetch(`/api/experiments/${expId}`);
+  const d    = await resp.json();
+
+  const f1pct = d.test_f1 != null ? (d.test_f1 * 100).toFixed(1) + '% F1' : '—';
+  document.getElementById('detail-title').textContent =
+    `Experiment ${d.id} — ${d.name}  (${f1pct})`;
+
+  renderConfusionMatrix(expId, d.confusion_matrix, d.class_names);
+  renderMetrics(d.metrics);
+}
+
+// ── Render confusion matrix ───────────────────────────────────────────────────
+function renderConfusionMatrix(expId, cm, classes) {
+  let html = '<table class="cm-table"><thead><tr><th class="cm-corner">true \\ pred</th>';
+  classes.forEach(c => html += `<th>${c}</th>`);
+  html += '</tr></thead><tbody>';
+
+  cm.forEach((row, i) => {
+    html += `<tr><td class="row-label">${classes[i]}</td>`;
+    row.forEach((val, j) => {
+      const isDiag = i === j;
+      const cls    = isDiag ? 'cm-diagonal' : val > 0 ? 'cm-off' : 'cm-zero';
+      html += `<td class="${cls}" onclick="loadDrillDown(${expId},'${classes[i]}','${classes[j]}')"
+                   title="True: ${classes[i]} → Predicted: ${classes[j]}">${val}</td>`;
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  document.getElementById('cm-wrap').innerHTML = html;
+}
+
+// ── Render per-class metrics ──────────────────────────────────────────────────
+function renderMetrics(metrics) {
+  let html = '<table class="metrics-table"><thead><tr>'
+    + '<th>Class</th><th>Precision</th><th>Recall</th><th>F1</th><th>Images</th>'
+    + '</tr></thead><tbody>';
+
+  metrics.forEach(m => {
+    const fmt = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
+    const bold = m.class_name === null ? ' style="font-weight:700;border-top:2px solid #ccc"' : '';
+    html += `<tr${bold}>
+      <td>${m.class_name || 'overall'}</td>
+      <td>${fmt(m.precision)}</td>
+      <td>${fmt(m.recall)}</td>
+      <td>${fmt(m.f1)}</td>
+      <td>${m.support || '—'}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  document.getElementById('metrics-wrap').innerHTML = html;
+}
+
+// ── Drill down into images for a confusion matrix cell ────────────────────────
+async function loadDrillDown(expId, trueClass, predClass) {
+  const isCorrect = trueClass === predClass;
+  document.getElementById('drill-panel').style.display = 'block';
+  document.getElementById('drill-header').textContent =
+    isCorrect
+      ? `✓ Correctly classified as "${trueClass}"`
+      : `✗ True: "${trueClass}" → Predicted: "${predClass}"`;
+  document.getElementById('drill-grid').innerHTML =
+    '<div class="drill-loading">Loading images...</div>';
+
+  const resp = await fetch(`/api/experiments/${expId}/images?true_class=${trueClass}&predicted_class=${predClass}`);
+  const data = await resp.json();
+
+  if (!data.images.length) {
+    document.getElementById('drill-grid').innerHTML = '<div class="drill-loading">No images.</div>';
+    return;
+  }
+
+  document.getElementById('drill-grid').innerHTML = data.images.map(img => {
+    const confColor = img.true_class === img.predicted_class ? 'conf-correct' : 'conf-wrong';
+    const scene = img.scene || '—';
+    const dep   = img.depression_angle != null ? img.depression_angle + '°' : '—';
+    const az    = img.azimuth_angle    != null ? img.azimuth_angle    + '°' : '—';
+    return `<div class="drill-card">
+      <img src="/atrnet-image/${img.image_id}" loading="lazy" alt="${img.true_class}">
+      <div class="drill-card-info">
+        <div style="font-weight:600">${img.target_type || img.true_class}</div>
+        <div style="color:#888">${scene} · dep ${dep} · az ${az}</div>
+        <div class="drill-card-conf ${confColor}">${(img.confidence * 100).toFixed(1)}% conf</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Training progress ─────────────────────────────────────────────────────────
+async function loadProgress() {
+  const resp = await fetch('/api/training-progress');
+  const data = await resp.json();
+  const jobs = data.jobs || [];
+
+  const panel = document.getElementById('progress-panel');
+  const container = document.getElementById('progress-jobs');
+
+  const active = jobs.filter(j => j.status === 'running');
+  if (!active.length) { panel.style.display = 'none'; return; }
+
+  panel.style.display = 'block';
+  container.innerHTML = active.map(j => {
+    if (j.type === 'training') {
+      const pct  = j.total_epochs ? Math.round(j.epoch / j.total_epochs * 100) : 0;
+      const acc  = j.val_acc != null ? j.val_acc.toFixed(1) + '% val' : 'epoch running…';
+      const eta  = j.eta_min != null ? `~${j.eta_min} min remaining` : '';
+      const epLabel = j.epoch && j.total_epochs ? `Epoch ${j.epoch}/${j.total_epochs}` : 'Starting…';
+      const expLabel = j.exp_id ? ` (Exp ${j.exp_id})` : '';
+      return `<div class="job-card">
+        <div class="job-name">${j.config}${expLabel}</div>
+        <div class="job-epoch">${epLabel}</div>
+        <div class="job-acc">${acc}</div>
+        <div class="job-bar-wrap"><div class="job-bar" style="width:${pct}%"></div></div>
+        <div class="job-eta">${eta}</div>
+      </div>`;
+    } else if (j.type === 'gbif_resolve') {
+      const pct = j.total ? Math.round(j.resolved / j.total * 100) : 0;
+      return `<div class="job-card">
+        <div class="job-name">${j.config}</div>
+        <div class="job-epoch">${j.resolved}${j.total ? ' / ' + j.total : ''} species</div>
+        <div class="job-acc">${pct}%</div>
+        <div class="job-bar-wrap"><div class="job-bar" style="width:${pct}%"></div></div>
+        <div class="job-eta"></div>
+      </div>`;
+    }
+    return '';
+  }).join('');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadExperiments();
+loadProgress();
+setInterval(loadProgress, 60000);  // refresh every minute
+</script>
+</body>
+</html>
