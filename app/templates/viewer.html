@@ -5,13 +5,63 @@
   <title>Defense ML — Image Viewer</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <style>
-    .viewer-body { padding: 20px; }
-    .placeholder { color: #888; margin-top: 40px; font-size: 14px; }
-    .placeholder code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+    /* ── Layout ── */
+    .app-body { display: flex; height: calc(100vh - 44px); overflow: hidden; }
+    .sidebar  { width: 220px; min-width: 220px; background: #f5f5f5; border-right: 1px solid #ddd;
+                padding: 16px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+    .main     { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* ── Sidebar controls ── */
+    .sidebar label { font-size: 11px; font-weight: 600; color: #555; text-transform: uppercase;
+                     letter-spacing: 0.5px; display: block; margin-bottom: 4px; }
+    .sidebar select, .sidebar input {
+        width: 100%; padding: 5px 7px; border: 1px solid #ccc; border-radius: 4px;
+        font-size: 13px; background: white; }
+    .sidebar-btn { width: 100%; padding: 7px; background: #1a237e; color: white; border: none;
+                   border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .sidebar-btn:hover { background: #283593; }
+    .count-label { font-size: 12px; color: #888; text-align: center; }
+
+    /* ── Toolbar ── */
+    .toolbar { padding: 10px 16px; background: white; border-bottom: 1px solid #e0e0e0;
+               display: flex; align-items: center; gap: 12px; }
+    .toolbar span { font-size: 13px; color: #555; }
+
+    /* ── Image grid ── */
+    .grid-wrap { flex: 1; overflow-y: auto; padding: 12px; }
+    .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+    .img-card   { border: 1px solid #ddd; border-radius: 4px; overflow: hidden; cursor: pointer;
+                  background: #1a1a1a; transition: box-shadow 0.15s; }
+    .img-card:hover   { box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+    .img-card.selected { outline: 3px solid #1a237e; }
+    .img-card img     { width: 100%; height: 120px; object-fit: cover; display: block; }
+    .img-card-label   { padding: 5px 7px; font-size: 11px; background: #1a1a1a; }
+
+    /* ── Detail panel ── */
+    #detail-panel { width: 320px; min-width: 320px; border-left: 1px solid #ddd;
+                    background: #fafafa; padding: 14px 12px; overflow-y: auto;
+                    display: none; flex-direction: column; gap: 8px; }
+    #detail-panel.visible { display: flex; }
+    #detail-img   { width: 100%; aspect-ratio: 1;
+                    image-rendering: pixelated; image-rendering: crisp-edges;
+                    border-radius: 2px; background: #111; display: block;
+                    filter: brightness(2.5) contrast(1.4); }
+    .detail-row   { display: flex; justify-content: space-between; font-size: 12px;
+                    border-bottom: 1px solid #eee; padding: 4px 0; }
+    .detail-key   { color: #888; flex-shrink: 0; }
+    .detail-val   { font-weight: 600; text-align: right; max-width: 200px;
+                    word-break: break-all; }
+    .detail-path  { font-size: 10px; color: #666; word-break: break-all;
+                    background: #f0f0f0; padding: 6px 8px; border-radius: 3px;
+                    font-family: monospace; margin-top: 4px; }
+
+    .empty-msg { color: #aaa; text-align: center; margin-top: 60px; font-size: 14px; }
   </style>
 </head>
 <body>
 <div class="app">
+
+  <!-- Header -->
   <header class="app-header">
     <span class="app-title">Defense ML Viewer</span>
     <div class="header-nav">
@@ -19,13 +69,233 @@
       <a class="nav-btn" href="/experiments">Experiments</a>
     </div>
   </header>
-  <div class="viewer-body">
-    <h2 style="color:#1a237e; margin-bottom:12px;">ATRNet-STAR Image Viewer</h2>
-    <p class="placeholder">
-      Image browser will be built here once ATRNet-STAR data is downloaded and ingested.<br><br>
-      Next step: run <code>python3 scripts/ingest_atrnet.py</code> to load images into the database.
-    </p>
-  </div>
+
+  <div class="app-body">
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div>
+        <label>Main Class</label>
+        <select id="f-main-class" onchange="onMainClassChange()">
+          <option value="">All</option>
+          {% for c in main_classes %}
+          <option value="{{ c }}">{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label>Subclass</label>
+        <select id="f-subclass" onchange="onSubclassChange()">
+          <option value="">All</option>
+          {% for c in subclasses %}
+          <option value="{{ c }}">{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label>Target Type</label>
+        <select id="f-target-type">
+          <option value="">All</option>
+          {% for c in target_types %}
+          <option value="{{ c }}">{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label>Scene</label>
+        <select id="f-scene">
+          <option value="">All</option>
+          {% for s in scenes %}
+          <option value="{{ s }}">{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label>Depression Angle</label>
+        <select id="f-depression">
+          <option value="">All</option>
+          {% for a in depression_angles %}
+          <option value="{{ a }}">{{ a }}°</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label>Split</label>
+        <select id="f-split">
+          <option value="">All</option>
+          <option value="train">Train</option>
+          <option value="test">Test</option>
+        </select>
+      </div>
+
+      <button class="sidebar-btn" onclick="loadImages()">Apply Filters</button>
+      <div class="count-label" id="count-label">—</div>
+    </div>
+
+    <!-- Main area -->
+    <div class="main">
+      <div class="toolbar">
+        <span id="toolbar-label">Select filters and click Apply</span>
+      </div>
+      <div class="grid-wrap">
+        <div class="image-grid" id="image-grid">
+          <div class="empty-msg">Select filters above and click Apply Filters.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detail panel -->
+    <div id="detail-panel">
+      <img id="detail-img" src="" alt="">
+      <div id="detail-fields"></div>
+    </div>
+
+  </div><!-- end app-body -->
 </div>
+
+<script>
+// All subclass and target_type options from server (for cascading dropdowns)
+const allSubclasses  = {{ subclasses  | tojson }};
+const allTargetTypes = {{ target_types | tojson }};
+
+// ── Cascading dropdowns ───────────────────────────────────────────────────────
+// (These will work properly once data is ingested and main_class/subclass
+//  relationships are populated in the DB. For now they filter by text match.)
+
+function onMainClassChange() {
+  loadImages();
+}
+
+function onSubclassChange() {
+  loadImages();
+}
+
+let currentOffset = 0;
+let currentFilters = {};
+
+function getFilters() {
+  return {
+    main_class:       document.getElementById('f-main-class').value,
+    subclass:         document.getElementById('f-subclass').value,
+    target_type:      document.getElementById('f-target-type').value,
+    scene:            document.getElementById('f-scene').value,
+    depression_angle: document.getElementById('f-depression').value,
+    split:            document.getElementById('f-split').value,
+  };
+}
+
+// ── Load images ───────────────────────────────────────────────────────────────
+async function loadImages() {
+  currentOffset  = 0;
+  currentFilters = getFilters();
+  document.getElementById('image-grid').innerHTML =
+    '<div class="empty-msg">Loading...</div>';
+  document.getElementById('count-label').textContent = '…';
+  await fetchAndAppend(true);
+}
+
+async function loadMore() {
+  currentOffset += 200;
+  await fetchAndAppend(false);
+}
+
+async function fetchAndAppend(replace) {
+  const params = new URLSearchParams({
+    ...currentFilters,
+    limit:  200,
+    offset: currentOffset,
+  });
+
+  const resp = await fetch('/api/atrnet/images?' + params);
+  const data = await resp.json();
+
+  document.getElementById('count-label').textContent = `${data.total} images`;
+  document.getElementById('toolbar-label').textContent =
+    `${data.total} images matching filters — showing ${currentOffset + data.images.length}`;
+
+  const newCardsHtml = data.images.map(m =>
+    `<div class="img-card" id="card-${m.id}" onclick="showDetail(${m.id})">
+      <img src="/atrnet-image/${m.id}" loading="lazy" alt="SAR chip ${m.id}">
+      <div class="img-card-label" style="line-height:1.5">
+        <div style="color:#fff; font-weight:600">${m.target_type || '—'}</div>
+        <div style="color:#aaa">${m.subclass || '—'}</div>
+        <div style="color:#777">${m.main_class || '—'} · ${m.scene || '—'}</div>
+      </div>
+    </div>`
+  ).join('');
+
+  if (replace) {
+    if (!data.images.length) {
+      document.getElementById('image-grid').innerHTML =
+        '<div class="empty-msg">No images match these filters.</div>';
+      document.getElementById('load-more-btn').style.display = 'none';
+      return;
+    }
+    document.getElementById('image-grid').innerHTML = newCardsHtml;
+  } else {
+    // Remove old load-more button before appending
+    const old = document.getElementById('load-more-btn');
+    if (old) old.remove();
+    document.getElementById('image-grid').insertAdjacentHTML('beforeend', newCardsHtml);
+  }
+
+  // Show/hide Load More button
+  const hasMore = (currentOffset + data.images.length) < data.total;
+  let btn = document.getElementById('load-more-btn');
+  if (!btn) {
+    document.getElementById('image-grid').insertAdjacentHTML('beforeend',
+      `<div id="load-more-btn" style="grid-column:1/-1; text-align:center; padding:12px;">
+        <button onclick="loadMore()" style="padding:8px 24px; background:#1a237e; color:white;
+          border:none; border-radius:4px; font-size:13px; font-weight:600; cursor:pointer;">
+          Load 200 more
+        </button>
+      </div>`);
+  }
+  document.getElementById('load-more-btn').style.display = hasMore ? 'block' : 'none';
+}
+
+// ── Show detail ───────────────────────────────────────────────────────────────
+async function showDetail(imageId) {
+  // Highlight selected card
+  document.querySelectorAll('.img-card').forEach(c =>
+    c.classList.toggle('selected', c.id === `card-${imageId}`));
+
+  const panel = document.getElementById('detail-panel');
+  panel.classList.add('visible');
+  document.getElementById('detail-img').src = `/atrnet-image/${imageId}`;
+
+  const resp = await fetch(`/api/atrnet/image/${imageId}`);
+  const d    = await resp.json();
+
+  const fields = [
+    ['Target Type',       d.target_type],
+    ['Subclass',          d.subclass],
+    ['Main Class',        d.main_class],
+    ['Scene',             d.scene],
+    ['Split',             d.split],
+    ['Setting',           d.experiment_setting],
+    ['Depression Angle',  d.depression_angle ? d.depression_angle + '°' : '—'],
+    ['Azimuth Angle',     d.azimuth_angle    ? d.azimuth_angle    + '°' : '—'],
+    ['Band',              d.band],
+    ['Polarization',      d.polarization],
+    ['ID',                d.id],
+  ];
+
+  document.getElementById('detail-fields').innerHTML =
+    fields.map(([k, v]) =>
+      `<div class="detail-row">
+        <span class="detail-key">${k}</span>
+        <span class="detail-val">${v || '—'}</span>
+      </div>`
+    ).join('') +
+    `<div style="margin-top:8px; font-size:11px; color:#888; font-weight:600;">FILE PATH</div>
+     <div class="detail-path">${d.local_path || '—'}</div>`;
+}
+</script>
 </body>
 </html>

@@ -3,8 +3,9 @@ __pycache__/
 *.pyc
 *.pyo
 .env
-data/atrnet/images/
-models/saved/
+data/
+models/
 logs/
 *.log
 .DS_Store
+.claude/

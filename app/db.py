@@ -44,6 +44,73 @@ def get_connection():
 
 # ── Image queries ─────────────────────────────────────────────────────────────
 
+def get_atrnet_filter_options():
+    """Return distinct values for sidebar dropdowns."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT main_class  FROM defense.atrnet_images WHERE main_class  IS NOT NULL ORDER BY 1")
+        main_classes = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT subclass     FROM defense.atrnet_images WHERE subclass     IS NOT NULL ORDER BY 1")
+        subclasses = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT target_type  FROM defense.atrnet_images WHERE target_type  IS NOT NULL ORDER BY 1")
+        target_types = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT scene        FROM defense.atrnet_images WHERE scene        IS NOT NULL ORDER BY 1")
+        scenes = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT depression_angle FROM defense.atrnet_images WHERE depression_angle IS NOT NULL ORDER BY 1")
+        depression_angles = [r[0] for r in cur.fetchall()]
+    finally:
+        conn.close()
+    return {
+        'main_classes':     main_classes,
+        'subclasses':       subclasses,
+        'target_types':     target_types,
+        'scenes':           scenes,
+        'depression_angles': depression_angles,
+    }
+
+
+def get_atrnet_image_list(main_class='', subclass='', target_type='',
+                          scene='', depression_angle='', split='',
+                          limit=200, offset=0):
+    """Return (ids, total) matching filters with pagination."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        where = "WHERE 1=1"
+        params = []
+        if main_class:
+            where += " AND main_class = %s";       params.append(main_class)
+        if subclass:
+            where += " AND subclass = %s";         params.append(subclass)
+        if target_type:
+            where += " AND target_type = %s";      params.append(target_type)
+        if scene:
+            where += " AND scene = %s";            params.append(scene)
+        if depression_angle:
+            where += " AND depression_angle = %s"; params.append(float(depression_angle))
+        if split:
+            where += " AND split = %s";            params.append(split)
+
+        # Total count
+        cur.execute(f"SELECT COUNT(*) FROM defense.atrnet_images {where}", params)
+        total = cur.fetchone()[0]
+
+        # Paged results — use a stable random order seeded by offset
+        cur.execute(
+            f"""SELECT id, target_type, subclass, main_class, scene
+                FROM defense.atrnet_images {where}
+                ORDER BY id OFFSET %s LIMIT %s""",
+            params + [offset, limit]
+        )
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    images = [{'id': r[0], 'target_type': r[1], 'subclass': r[2],
+               'main_class': r[3], 'scene': r[4]} for r in rows]
+    return images, total
+
+
 def get_atrnet_image(image_id):
     """Return metadata for one ATRNet image."""
     conn = get_connection()

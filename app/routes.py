@@ -31,7 +31,8 @@ DATA_DIR = Path(__file__).parent.parent / 'data' / 'atrnet'
 
 @bp.route('/')
 def index():
-    return render_template('viewer.html')
+    opts = db.get_atrnet_filter_options()
+    return render_template('viewer.html', **opts)
 
 
 @bp.route('/experiments')
@@ -43,14 +44,55 @@ def experiments():
 
 @bp.route('/atrnet-image/<int:image_id>')
 def serve_atrnet_image(image_id):
-    """Serve an ATRNet image chip from its local_path stored in the DB."""
+    """Serve an ATRNet image chip. Converts .tif to JPEG in memory for browser display."""
+    from PIL import Image as PILImage
+    import io
     detail = db.get_atrnet_image(image_id)
     if not detail or not detail.get('local_path'):
         abort(404)
     path = Path(detail['local_path'])
     if not path.exists():
         abort(404)
-    return send_file(path, mimetype='image/png')
+    # Convert to JPEG so browsers can display it (tif not supported by most browsers)
+    try:
+        img = PILImage.open(path).convert('RGB')
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=90)
+        buf.seek(0)
+        return send_file(buf, mimetype='image/jpeg')
+    except Exception:
+        abort(500)
+
+
+# ── ATRNet image API ──────────────────────────────────────────────────────────
+
+@bp.route('/api/atrnet/images')
+def api_atrnet_images():
+    ids, total = db.get_atrnet_image_list(
+        main_class      = request.args.get('main_class', ''),
+        subclass        = request.args.get('subclass', ''),
+        target_type     = request.args.get('target_type', ''),
+        scene           = request.args.get('scene', ''),
+        depression_angle= request.args.get('depression_angle', ''),
+        split           = request.args.get('split', ''),
+        limit           = int(request.args.get('limit', 200)),
+        offset          = int(request.args.get('offset', 0)),
+    )
+    return jsonify({'count': len(ids), 'total': total, 'images': ids})
+
+
+
+@bp.route('/api/atrnet/image/<int:image_id>')
+def api_atrnet_image(image_id):
+    detail = db.get_atrnet_image(image_id)
+    if not detail:
+        return jsonify({'error': 'Not found'}), 404
+    for k, v in detail.items():
+        if hasattr(v, 'isoformat'):
+            detail[k] = str(v)
+        elif v is None:
+            detail[k] = ''
+    return jsonify(detail)
 
 
 # ── Experiment API ────────────────────────────────────────────────────────────
