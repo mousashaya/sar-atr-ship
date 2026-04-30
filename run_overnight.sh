@@ -12,6 +12,11 @@ mkdir -p $CD/logs
 
 echo "=== Overnight run started $(date) ===" | tee -a $LOG
 
+# Prevent display/idle/disk sleep for the entire run
+caffeinate -dim &
+CAFFEINATE_PID=$!
+trap "kill $CAFFEINATE_PID 2>/dev/null" EXIT
+
 # Wait for hierarchy eval to finish (if still running)
 HIER_PID=$(pgrep -f eval_eoc_hierarchy_full)
 if [ -n "$HIER_PID" ]; then

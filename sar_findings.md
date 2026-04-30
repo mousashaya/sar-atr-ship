@@ -53,12 +53,13 @@ The correct EOC evaluation: **train only on the restricted data** specified by t
 
 ---
 
-## EOC Results: What the Numbers Actually Show
+## Results: What the Numbers Actually Show
 
 With the correct evaluation protocol, using ConvNeXt-Small:
 
-| EOC Condition | Our result | Paper (ConvNeXt) | Difference |
+| Condition | Our result | Paper | Difference |
 |---|---|---|---|
+| SOC (all conditions) | 95.8% | 96.4% | −0.6% |
 | EOC_depression (15° → 30/45/60°) | 40.0% | 37.2% | +2.8% |
 | EOC_pol (HH → HV/VH/VV) | 79.8% | 70.5% | +9.3% |
 | EOC_scene (simple → complex) | 26.2% | 18.0% | −7.8% |
@@ -114,15 +115,50 @@ The model falls apart at 60° — the most extreme departure from the 15° train
 
 ---
 
+## The Full Hierarchy Experiment
+
+Thinking the 4-class routing problem might be solvable at the coarse level, I built a full 3-level hierarchy: main class (4-way) → subtype (Bus/Car/Truck/Special variants, ~4-8 per class) → specific vehicle (40 total). Each level gets its own dedicated classifier, all trained on 15° images only.
+
+**Result:**
+
+| Method | EOC_depression test accuracy |
+|---|---|
+| Flat ConvNeXt-Small | 37.6% |
+| 3-level hierarchy (predicted routing) | 36.3% |
+| 3-level hierarchy (oracle routing) | 53.8% |
+| SotA (paper, with leakage) | 43.1% |
+
+The 3-level hierarchy performs slightly *worse* than the flat baseline. The routing failure compounds through three stages. Oracle routing (53.8%) confirms the cascade structure has theoretical headroom — the problem is that routing accuracy at unseen angles is too low to capture it.
+
+## Angle Translation: Can We Synthesize Missing Views?
+
+The oracle result of 95.3% (angle-specific models with perfect routing) shows the information to solve EOC_depression exists — if models for each angle are available. This motivated trying to *synthesize* 30/45/60° images from 15° training images. Two approaches:
+
+**Transformer-based translator:** Train an encoder-decoder to translate 15° SAR images into the style of 30/45/60°. The translated images are then classified by a 15°-trained model. Trained separately for each target angle (30→15, 45→15, 60→15).
+
+**CycleGAN translator:** Same goal, using an adversarial GAN with cycle-consistency loss for unpaired image-to-image translation.
+
+**Results:**
+
+| Method | EOC_depression test accuracy |
+|---|---|
+| Flat baseline (no translation) | 37.6% |
+| Transformer translator | 15.2% |
+| GAN translator | 15.1% |
+
+Both translation approaches made things dramatically *worse* — less than half the flat baseline. The translators learned to produce images that superficially resemble the target domain (in terms of brightness/texture statistics) but destroyed the discriminative SAR scattering features. Classification on translated images was essentially random.
+
+This failure is informative. SAR scattering from a vehicle at 30° is not a stylistic variation of 30° — it is a fundamentally different physical measurement. The depression angle determines which facets are visible, how shadowing falls, and the magnitude of corner-reflector returns. Translating between them is not a style transfer problem; it is a physical simulation problem.
+
 ## What Would Actually Help EOC_depression
 
-I explored this question honestly. The fundamental problem — learning angle-invariant features from a single depression angle — is not easily solved by standard ML tricks. Some directions exist:
+The oracle bound (95.3%) shows the problem is solvable — but only with angle-specific models. The realistic paths forward:
 
-- **Domain adaptation** (DANN and variants) requires unlabeled target-domain images at training time, which may violate benchmark rules
-- **Physics-based feature extraction** (angle-invariant scattering features) requires specialized SAR signal processing outside standard deep learning pipelines
-- **Generative translation** (train a model to synthesize 30/45/60° images from 15°) is promising but adds significant complexity and assumptions
+- **Physics-based simulation** (e.g., FEKO, Xpatch) to synthesize training data at target angles requires detailed 3D CAD models of vehicles and specialized EM solvers — beyond standard ML tooling
+- **Domain adaptation** (DANN, MMD) requires unlabeled target-angle images at training time, which may violate benchmark rules
+- **Foundation models** pre-trained on large multi-angle SAR corpora (e.g., SARATR-X) may have learned some angle invariance, but are not publicly available for fine-tuning
 
-No straightforward architectural change solves it. The EOC_depression challenge is genuinely hard.
+No standard deep learning trick solves it. The challenge is genuine physics.
 
 ---
 
@@ -132,11 +168,13 @@ No straightforward architectural change solves it. The EOC_depression challenge 
 
 2. **Verify evaluation correctness before trusting results.** When numbers look surprisingly good, that is a reason to check harder.
 
-3. **Cascade classification requires stable routing.** If the routing signal fails under domain shift, the cascade makes things worse, not better.
+3. **Cascade classification requires stable routing.** If the routing signal fails under domain shift, the cascade compounds errors rather than reducing them. Adding hierarchy levels makes this worse.
 
 4. **EOC_depression is a real unsolved problem.** The benchmark's reported difficulty for this condition is not a leakage artifact — it reflects genuine challenges in SAR angle generalization.
 
 5. **The leakage effect is condition-specific.** Not all EOC conditions are equally affected. Depression is unaffected; polarization shows clear improvement with clean split; scene is inconclusive.
+
+6. **SAR domain translation is not image style transfer.** Depression angle determines which physical scattering mechanisms are visible — translating between angles requires physical simulation, not learned texture mapping. Both transformer and GAN translators destroyed discriminative features and cut accuracy by more than half.
 
 ---
 

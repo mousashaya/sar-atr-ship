@@ -18,6 +18,11 @@ cd $CD
 
 echo "=== Cascade Level 2 training started $(date) ===" | tee -a $LOG
 
+# Prevent display/idle/disk sleep for the entire training run
+caffeinate -dim &
+CAFFEINATE_PID=$!
+trap "kill $CAFFEINATE_PID 2>/dev/null" EXIT
+
 run_l2() {
     local PARENT=$1
     local ANGLE=$2
