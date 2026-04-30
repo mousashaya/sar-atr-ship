@@ -40,6 +40,12 @@ def experiments():
     return render_template('experiments.html')
 
 
+@bp.route('/ships')
+def ships():
+    filters = db.get_shiprs_filters()
+    return render_template('ships.html', **filters)
+
+
 # ── Image serving ─────────────────────────────────────────────────────────────
 
 @bp.route('/atrnet-image/<int:image_id>')
@@ -183,3 +189,68 @@ def api_training_progress():
                 continue
 
     return jsonify({'jobs': jobs})
+
+
+# ── ShipRS image serving ──────────────────────────────────────────────────────
+
+@bp.route('/shiprs-image/<int:image_id>')
+def serve_shiprs_image(image_id):
+    """Serve a ShipRS image chip cropped to the instance bounding box."""
+    from PIL import Image as PILImage
+    import io
+    size = min(int(request.args.get('size', 256)), 768)
+    row = db.get_shiprs_instance(image_id)
+    if not row or not row.get('local_path'):
+        abort(404)
+    path = Path(row['local_path'])
+    if not path.exists():
+        abort(404)
+    try:
+        img = PILImage.open(path).convert('RGB')
+        cx, cy = row.get('cx'), row.get('cy')
+        bw, bh = row.get('bbox_w'), row.get('bbox_h')
+        if cx and cy and bw and bh:
+            pad = max(20, int(max(bw, bh) * 0.15))
+            x1 = max(0, int(cx - bw/2) - pad)
+            y1 = max(0, int(cy - bh/2) - pad)
+            x2 = min(img.width,  int(cx + bw/2) + pad)
+            y2 = min(img.height, int(cy + bh/2) + pad)
+            img = img.crop((x1, y1, x2, y2))
+        # Pad to square to preserve aspect ratio
+        w, h = img.size
+        side = max(w, h)
+        square = PILImage.new('RGB', (side, side), (20, 20, 20))
+        square.paste(img, ((side - w) // 2, (side - h) // 2))
+        square = square.resize((size, size), PILImage.LANCZOS)
+        buf = io.BytesIO()
+        square.save(buf, format='JPEG', quality=92)
+        buf.seek(0)
+        return send_file(buf, mimetype='image/jpeg')
+    except Exception:
+        abort(500)
+
+
+@bp.route('/api/shiprs/images')
+def api_shiprs_images():
+    level_1 = request.args.get('level_1', '')
+    level_2 = request.args.get('level_2', '')
+    level_3 = request.args.get('level_3', '')
+    split   = request.args.get('split', '')
+    limit   = int(request.args.get('limit', 200))
+    offset  = int(request.args.get('offset', 0))
+    images, total = db.get_shiprs_image_list(level_1, level_2, level_3, split, limit, offset)
+    return jsonify({'count': len(images), 'total': total, 'images': images})
+
+
+@bp.route('/api/shiprs/instance/<int:instance_id>')
+def api_shiprs_instance(instance_id):
+    row = db.get_shiprs_instance(instance_id)
+    if not row:
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify({k: (str(v) if hasattr(v, 'isoformat') else v) for k, v in row.items()})
+
+
+@bp.route('/api/shiprs/filters')
+def api_shiprs_filters():
+    filters = db.get_shiprs_filters()
+    return jsonify(filters)

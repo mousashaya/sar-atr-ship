@@ -112,6 +112,7 @@ def create_experiment(conn, args, model_config: dict, class_names: list) -> int:
             args.batch_size,
             args.crop_bbox,
             f"setting={args.setting}  classes={class_names}  "
+            f"parent_class={args.parent_class}  subclass={args.subclass}  polarization={args.polarization}  "
             f"max_per_class={args.max_per_class}  "
             f"augment={args.augment}  crop_bbox={args.crop_bbox}  "
             f"use_atrnet_splits={args.use_atrnet_splits}",
@@ -229,6 +230,16 @@ def main():
                         help="Train on one depression angle only (e.g. 15, 30, 45, 60)")
     parser.add_argument("--parent-class",  default=None,
                         help="Cascade Level 2: restrict to images where main_class=this (e.g. Bus, Car, Special, Truck)")
+    parser.add_argument("--subclass",      default=None,
+                        help="Cascade Level 3: restrict to images where subclass=this (e.g. Medium_Bus, Large_Car)")
+    parser.add_argument("--polarization",  default=None,
+                        help="Pol routing: restrict to images with this polarization (HH, HV, VH, VV)")
+    parser.add_argument("--band",          default=None,
+                        help="Band routing: restrict to images with this radar band (X, KU)")
+    parser.add_argument("--azimuth-min",   type=float, default=None,
+                        help="Azimuth routing: lower bound of azimuth range (inclusive)")
+    parser.add_argument("--azimuth-max",   type=float, default=None,
+                        help="Azimuth routing: upper bound of azimuth range (exclusive)")
     parser.add_argument("--max-per-class", type=int, default=None)
     parser.add_argument("--epochs",        type=int, default=10)
     parser.add_argument("--batch-size",    type=int, default=32)
@@ -240,6 +251,8 @@ def main():
                         help="Apply rotation/flip augmentation to training set")
     parser.add_argument("--use-atrnet-splits", action="store_true",
                         help="Use ATRNet predefined train/test split instead of random split")
+    parser.add_argument("--patience",      type=int, default=3,
+                        help="Stop early if val_acc doesn't improve for N epochs (0=disabled)")
     parser.add_argument("--cache",         action="store_true")
     parser.add_argument("--num-workers",   type=int, default=4)
     args = parser.parse_args()
@@ -272,6 +285,11 @@ def main():
         setting=args.setting,
         angle=args.angle,
         parent_class=args.parent_class,
+        subclass=args.subclass,
+        polarization=args.polarization,
+        band=args.band,
+        azimuth_min=args.azimuth_min,
+        azimuth_max=args.azimuth_max,
     )
     print(f"Classes ({len(class_names)}): {class_names}")
     print(f"Train: {len(train_ds):,}  Val: {len(val_ds):,}  Test: {len(test_ds):,}")
@@ -309,7 +327,9 @@ def main():
     log(f"Experiment ID: {exp_id}")
     log(f"Training for {args.epochs} epochs...")
 
-    best_val_acc = 0.0
+    best_val_acc   = 0.0
+    patience_count = 0
+    stopped_early  = False
     save_dir = Path(__file__).parent.parent / 'models' / 'saved' / f'exp_{exp_id:03d}_{args.name}'
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -327,10 +347,38 @@ def main():
         save_epoch(conn, exp_id, epoch, train_loss, val_acc, elapsed)
 
         if val_acc > best_val_acc:
-            best_val_acc = val_acc
+            best_val_acc   = val_acc
+            patience_count = 0
             torch.save(model.state_dict(), save_dir / 'weights.pt')
+            new_best = True
+        else:
+            patience_count += 1
+            new_best = False
+            if args.patience > 0 and patience_count >= args.patience:
+                log(f"\nEarly stop: no improvement for {args.patience} epochs.")
 
-    log(f"\nBest val accuracy: {best_val_acc*100:.1f}%")
+        # Per-epoch email
+        send_email(
+            to=os.environ.get('NOTIFY_EMAIL', os.environ.get('GMAIL_USER', '')),
+            subject=f"Exp {exp_id} [{args.name}] — Epoch {epoch}/{args.epochs} "
+                    f"{'★ new best ' if new_best else ''}{val_acc*100:.1f}%",
+            body=(
+                f"Experiment {exp_id} — {args.name}\n"
+                f"Epoch {epoch}/{args.epochs}\n"
+                f"Val acc:   {val_acc*100:.1f}%"
+                f"{'  ★ new best!' if new_best else f'  (best={best_val_acc*100:.1f}%)'}\n"
+                f"Train loss: {train_loss:.4f}\n"
+                f"Elapsed:   {elapsed}s\n"
+                f"Patience:  {patience_count}/{args.patience if args.patience > 0 else '∞'}\n"
+            ),
+        )
+
+        if args.patience > 0 and patience_count >= args.patience:
+            stopped_early = True
+            break
+
+    log(f"\nBest val accuracy: {best_val_acc*100:.1f}%"
+        + (f"  (stopped at epoch {epoch}/{args.epochs})" if stopped_early else ""))
 
     # ── Save config ───────────────────────────────────────────────────────────
     config = {

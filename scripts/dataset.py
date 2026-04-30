@@ -62,7 +62,12 @@ CONFIG_FIELD = {
 def get_images(conn, config_name: str, split_filter: str = None,
                setting: str = 'SOC_40classes',
                angle: float = None,
-               parent_class: str = None) -> list[dict]:
+               parent_class: str = None,
+               subclass: str = None,
+               polarization: str = None,
+               band: str = None,
+               azimuth_min: float = None,
+               azimuth_max: float = None) -> list[dict]:
     """
     Return list of {image_id, local_path, true_class} dicts.
     split_filter: 'train' or 'test' to use ATRNet's predefined splits.
@@ -70,6 +75,9 @@ def get_images(conn, config_name: str, split_filter: str = None,
     setting: experiment_setting to filter on (default: SOC_40classes).
     angle: depression_angle to filter on (e.g. 15, 30, 45, 60). None = all angles.
     parent_class: restrict to images where main_class = this value (cascade Level 2).
+    polarization: restrict to images with this polarization (e.g. HH, HV, VH, VV).
+    band: restrict to images with this radar band (e.g. X, KU).
+    azimuth_min/azimuth_max: restrict to azimuth_angle in [min, max).
     """
     class_field = CONFIG_FIELD.get(config_name)
     if not class_field:
@@ -98,6 +106,21 @@ def get_images(conn, config_name: str, split_filter: str = None,
     if parent_class is not None:
         sql += " AND main_class = %s"
         params.append(parent_class)
+    if subclass is not None:
+        sql += " AND subclass = %s"
+        params.append(subclass)
+    if polarization is not None:
+        sql += " AND polarization = %s"
+        params.append(polarization)
+    if band is not None:
+        sql += " AND band = %s"
+        params.append(band)
+    if azimuth_min is not None:
+        sql += " AND azimuth_angle >= %s"
+        params.append(azimuth_min)
+    if azimuth_max is not None:
+        sql += " AND azimuth_angle < %s"
+        params.append(azimuth_max)
     if split_filter:
         sql += " AND split = %s"
         params.append(split_filter)
@@ -250,7 +273,12 @@ def build_datasets(config_name: str,
                    crop_bbox: bool = False,
                    setting: str = 'SOC_40classes',
                    angle: float = None,
-                   parent_class: str = None):
+                   parent_class: str = None,
+                   subclass: str = None,
+                   polarization: str = None,
+                   band: str = None,
+                   azimuth_min: float = None,
+                   azimuth_max: float = None):
     """
     Main entry point called by train.py.
 
@@ -272,8 +300,8 @@ def build_datasets(config_name: str,
             print("WARNING: --use-atrnet-splits uses the official ATRNet-STAR split "
                   "which has known cross-polarization data leakage. "
                   "See Gao et al. (IEEE GRSL 2026) for details.")
-            train_imgs = get_images(conn, config_name, split_filter='train', setting=setting, angle=angle, parent_class=parent_class)
-            test_imgs  = get_images(conn, config_name, split_filter='test',  setting=setting, angle=angle, parent_class=parent_class)
+            train_imgs = get_images(conn, config_name, split_filter='train', setting=setting, angle=angle, parent_class=parent_class, subclass=subclass, polarization=polarization, band=band, azimuth_min=azimuth_min, azimuth_max=azimuth_max)
+            test_imgs  = get_images(conn, config_name, split_filter='test',  setting=setting, angle=angle, parent_class=parent_class, subclass=subclass, polarization=polarization, band=band, azimuth_min=azimuth_min, azimuth_max=azimuth_max)
             # Carve a val set out of train (15% of training data)
             rng = np.random.default_rng(seed)
             by_class = defaultdict(list)
@@ -288,7 +316,7 @@ def build_datasets(config_name: str,
                 train_recs.extend(items[n_val:])
             test_recs = test_imgs
         else:
-            all_images = get_images(conn, config_name, setting=setting, angle=angle, parent_class=parent_class)
+            all_images = get_images(conn, config_name, setting=setting, angle=angle, parent_class=parent_class, subclass=subclass, polarization=polarization, band=band, azimuth_min=azimuth_min, azimuth_max=azimuth_max)
             if max_per_class:
                 by_class = defaultdict(list)
                 for img in all_images:

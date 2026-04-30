@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShipRS Viewer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f1117; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+    .app-header { background: #1a1d27; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #2a2d3a; flex-shrink: 0; }
+    .app-title { font-size: 1.1rem; font-weight: 600; color: #7eb8f7; }
+    .header-nav { display: flex; gap: 8px; }
+    .nav-btn { padding: 6px 14px; border-radius: 6px; text-decoration: none; color: #aaa; font-size: 0.85rem; border: 1px solid #2a2d3a; }
+    .nav-btn:hover { background: #2a2d3a; color: #fff; }
+    .nav-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .app-body { display: flex; flex: 1; overflow: hidden; }
+    .sidebar { width: 220px; background: #13161f; padding: 16px; overflow-y: auto; border-right: 1px solid #2a2d3a; flex-shrink: 0; }
+    .sidebar label { display: block; font-size: 0.75rem; color: #888; margin-bottom: 4px; margin-top: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .sidebar select { width: 100%; background: #1a1d27; color: #e0e0e0; border: 1px solid #2a2d3a; border-radius: 6px; padding: 6px 8px; font-size: 0.85rem; }
+    .sidebar .count { font-size: 0.75rem; color: #666; margin-top: 8px; }
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .grid-area { flex: 1; overflow-y: auto; padding: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+    .chip { background: #1a1d27; border-radius: 8px; overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s; }
+    .chip:hover { border-color: #2563eb; }
+    .chip.selected { border-color: #f59e0b; }
+    .chip img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: #111; }
+    .chip-label { padding: 6px 8px; font-size: 0.72rem; color: #bbb; line-height: 1.3; }
+    .chip-label strong { color: #e0e0e0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .detail-panel { width: 380px; background: #13161f; border-left: 1px solid #2a2d3a; padding: 16px; overflow-y: auto; flex-shrink: 0; display: none; }
+    .detail-panel.open { display: block; }
+    .detail-panel img { width: 100%; border-radius: 8px; margin-bottom: 12px; image-rendering: auto; }
+    .detail-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #1a1d27; font-size: 0.8rem; }
+    .detail-row .lbl { color: #888; flex-shrink: 0; margin-right: 8px; }
+    .detail-row .val { color: #e0e0e0; text-align: right; word-break: break-word; }
+    .hier-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; margin: 2px; }
+    .l0 { background: #1e3a5f; color: #7eb8f7; }
+    .l1 { background: #1e4d2e; color: #6ee7b7; }
+    .l2 { background: #4a2c1e; color: #fbbf24; }
+    .l3 { background: #3b1e4a; color: #c084fc; }
+    .detail-section { font-size: 0.7rem; color: #555; text-transform: uppercase; letter-spacing: 0.06em; margin: 12px 0 4px; }
+    .env-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .env-pill { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; background: #222; color: #aaa; border: 1px solid #333; }
+    .env-pill.on { background: #1e3a2e; color: #6ee7b7; border-color: #2d6b47; }
+    .loading { text-align: center; color: #555; padding: 40px; }
+  </style>
+</head>
+<body>
+<div class="app" style="display:flex;flex-direction:column;height:100vh;">
+
+  <header class="app-header">
+    <span class="app-title">ShipRS Viewer</span>
+    <div class="header-nav">
+      <a class="nav-btn" href="/">ATRNet Viewer</a>
+      <a class="nav-btn active" href="/ships">ShipRS Viewer</a>
+      <a class="nav-btn" href="/experiments">Experiments</a>
+    </div>
+  </header>
+
+  <div class="app-body">
+    <div class="sidebar">
+      <div>
+        <label>Split</label>
+        <select id="f-split" onchange="loadImages()">
+          <option value="">All</option>
+          {% for s in split %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Level 1 (Type)</label>
+        <select id="f-level1" onchange="onL1Change()">
+          <option value="">All</option>
+          {% for c in level_1 %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Level 2 (Category)</label>
+        <select id="f-level2" onchange="onL2Change()">
+          <option value="">All</option>
+          {% for c in level_2 %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Level 3 (Class)</label>
+        <select id="f-level3" onchange="loadImages()">
+          <option value="">All</option>
+          {% for c in level_3 %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="count" id="count-label">Loading...</div>
+    </div>
+
+    <div class="main">
+      <div class="grid-area">
+        <div class="grid" id="grid"><div class="loading">Loading images...</div></div>
+      </div>
+    </div>
+
+    <div class="detail-panel" id="detail-panel">
+      <img id="detail-img" src="" alt="ship">
+      <div id="detail-hier" style="margin-bottom:10px;"></div>
+      <div class="detail-section">Classification</div>
+      <div id="detail-rows"></div>
+      <div class="detail-section">Geometry</div>
+      <div id="detail-geo"></div>
+      <div class="detail-section">Environment</div>
+      <div id="detail-env"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let allFilters = {};
+
+async function loadFilters() {
+  const r = await fetch('/api/shiprs/filters');
+  allFilters = await r.json();
+}
+
+function populateSelect(id, values, current) {
+  const sel = document.getElementById(id);
+  const cur = current || sel.value;
+  sel.innerHTML = '<option value="">All</option>';
+  values.forEach(v => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = v;
+    if (v === cur) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+async function onL1Change() {
+  const l1 = document.getElementById('f-level1').value;
+  if (l1 && allFilters.level_2) {
+    // Filter level2/level3 options based on what's available — just reload all for simplicity
+  }
+  document.getElementById('f-level2').value = '';
+  document.getElementById('f-level3').value = '';
+  loadImages();
+}
+
+function onL2Change() {
+  document.getElementById('f-level3').value = '';
+  loadImages();
+}
+
+async function loadImages() {
+  const params = new URLSearchParams({
+    level_1: document.getElementById('f-level1').value,
+    level_2: document.getElementById('f-level2').value,
+    level_3: document.getElementById('f-level3').value,
+    split:   document.getElementById('f-split').value,
+    limit: 200,
+  });
+  const resp = await fetch('/api/shiprs/images?' + params);
+  const data = await resp.json();
+  document.getElementById('count-label').textContent = `${data.total.toLocaleString()} instances`;
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  data.images.forEach(m => {
+    grid.innerHTML += `
+      <div class="chip" onclick="showDetail(${m.id})">
+        <img src="/shiprs-image/${m.id}" loading="lazy" alt="${m.level_3}">
+        <div class="chip-label">
+          <strong>${m.level_3 || 'Unknown'}</strong>
+          ${m.level_2 || ''} · ${m.split || ''}
+        </div>
+      </div>`;
+  });
+}
+
+async function showDetail(id) {
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
+  event.currentTarget.classList.add('selected');
+  const panel = document.getElementById('detail-panel');
+  panel.classList.add('open');
+
+  // High-res image for detail panel
+  document.getElementById('detail-img').src = `/shiprs-image/${id}?size=512`;
+
+  // Clear while loading
+  ['detail-hier','detail-rows','detail-geo','detail-env'].forEach(id => {
+    document.getElementById(id).innerHTML = '<span style="color:#555;font-size:0.78rem">Loading...</span>';
+  });
+
+  const resp = await fetch(`/api/shiprs/instance/${id}`);
+  if (!resp.ok) return;
+  const d = await resp.json();
+
+  // Hierarchy badges
+  const hier = [
+    [d.level_0,'l0'], [d.level_1,'l1'], [d.level_2,'l2'], [d.level_3,'l3']
+  ].filter(([v]) => v);
+  document.getElementById('detail-hier').innerHTML =
+    hier.map(([v,cls]) => `<span class="hier-badge ${cls}">${v}</span>`).join(' → ');
+
+  // Classification rows
+  document.getElementById('detail-rows').innerHTML = [
+    ['Split',     d.split],
+    ['Size',      d.ship_size],
+    ['Location',  d.ship_location],
+    ['Image',     d.image_file],
+    ['Instance',  d.instance_id],
+    ['ID',        d.id],
+  ].map(([k,v]) => v != null && v !== '' ?
+    `<div class="detail-row"><span class="lbl">${k}</span><span class="val">${v}</span></div>` : ''
+  ).join('');
+
+  // Geometry
+  const bw = d.bbox_w ? Math.round(d.bbox_w) : '—';
+  const bh = d.bbox_h ? Math.round(d.bbox_h) : '—';
+  const rot = d.bbox_rot != null ? Math.round(d.bbox_rot) + '°' : '—';
+  document.getElementById('detail-geo').innerHTML = [
+    ['Center',    d.cx && d.cy ? `${Math.round(d.cx)}, ${Math.round(d.cy)}` : '—'],
+    ['BBox (w×h)',`${bw} × ${bh} px`],
+    ['Rotation',  rot],
+    ['Image size',d.image_width ? `${d.image_width} × ${d.image_height}` : '—'],
+  ].map(([k,v]) =>
+    `<div class="detail-row"><span class="lbl">${k}</span><span class="val">${v}</span></div>`
+  ).join('');
+
+  // Environment flags
+  const flags = [
+    ['Normal', d.env_normal], ['Fog', d.env_fog],
+    ['Glint',  d.env_glint],  ['Dark', d.env_dark],
+  ];
+  document.getElementById('detail-env').innerHTML =
+    `<div class="env-flags">${
+      flags.map(([label, val]) =>
+        `<span class="env-pill ${val ? 'on' : ''}">${label}</span>`
+      ).join('')
+    }</div>` +
+    (d.difficult ? '<div class="detail-row"><span class="lbl">Difficult</span><span class="val" style="color:#f87171">yes</span></div>' : '') +
+    (d.is_crowd  ? '<div class="detail-row"><span class="lbl">Crowd</span><span class="val" style="color:#fbbf24">yes</span></div>'    : '');
+}
+
+loadFilters().then(loadImages);
+</script>
+</body>
+</html>

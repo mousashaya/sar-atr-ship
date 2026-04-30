@@ -223,3 +223,62 @@ def get_experiment_images(exp_id, true_class, predicted_class, limit=50):
         return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
+
+
+# ── ShipRS queries ────────────────────────────────────────────────────────────
+
+def get_shiprs_instance(instance_id: int) -> dict:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM defense.shiprs_images WHERE id = %s", (instance_id,))
+        row = cur.fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()
+
+
+def get_shiprs_image_list(level_1='', level_2='', level_3='', split='',
+                           limit=200, offset=0):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        where = ['local_path IS NOT NULL']
+        params = []
+        if level_1:
+            where.append('level_1 = %s'); params.append(level_1)
+        if level_2:
+            where.append('level_2 = %s'); params.append(level_2)
+        if level_3:
+            where.append('level_3 = %s'); params.append(level_3)
+        if split:
+            where.append('split = %s'); params.append(split)
+        w = ' AND '.join(where)
+
+        cur.execute(f"SELECT COUNT(*) FROM defense.shiprs_images WHERE {w}", params)
+        total = cur.fetchone()['count']
+
+        cur.execute(f"""
+            SELECT id, image_file, level_0, level_1, level_2, level_3,
+                   ship_size, ship_location, split, cx, cy, bbox_w, bbox_h
+            FROM defense.shiprs_images WHERE {w}
+            ORDER BY level_1, level_3, id
+            LIMIT %s OFFSET %s
+        """, params + [limit, offset])
+        return [dict(r) for r in cur.fetchall()], total
+    finally:
+        conn.close()
+
+
+def get_shiprs_filters() -> dict:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        result = {}
+        for col in ('level_1', 'level_2', 'level_3', 'split'):
+            cur.execute(f"SELECT DISTINCT {col} FROM defense.shiprs_images "
+                        f"WHERE {col} IS NOT NULL ORDER BY {col}")
+            result[col] = [r[col] for r in cur.fetchall()]
+        return result
+    finally:
+        conn.close()
