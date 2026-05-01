@@ -425,6 +425,180 @@ Compare the curve to rot_baseline_full_v1. That's the experiment.
 
 ---
 
+## Script Walkthroughs
+
+How each key script is structured internally — plain English, no jargon.
+
+---
+
+### train.py — The Training Script
+
+This is the most important script. When you run it, here is what
+happens in order:
+
+```
+1. READ ARGUMENTS
+   Reads everything you typed on the command line (--model, --epochs, etc.)
+
+2. SET UP DEVICE
+   Checks: is MPS (Mac GPU) available? If yes use it.
+   If not, try CUDA (Nvidia GPU). If not, use CPU.
+
+3. LOAD THE MODEL
+   Reads --model flag (e.g. "convnext_small")
+   Imports models/convnext_small.py
+   Calls build_model(num_classes=40) → creates the neural network
+
+4. CREATE EXPERIMENT IN DB
+   Writes one row to defense.experiments table
+   Gets back a unique ID (e.g. 108) — this is the experiment number
+
+5. LOAD DATA (via dataset.py)
+   Queries the DB for all matching images
+   Applies acquisition-key split → train / val / test groups
+   Creates DataLoader objects — these feed images to the model in batches
+
+6. TRAINING LOOP (repeats for each epoch)
+   For each batch of images:
+     - Feed images through the model → get predictions (logits)
+     - Compare predictions to true labels → calculate loss
+     - Backpropagate — adjust weights to reduce loss
+     - Repeat for all batches
+   At end of epoch: evaluate on validation set
+   If val accuracy improved: save weights to disk
+   Send email notification
+   If no improvement for N epochs (patience): stop early
+
+7. FINAL EVALUATION
+   Load best saved weights
+   Run on test set → report TEST accuracy
+   Save per-image predictions to DB
+   Save per-class metrics (precision/recall/F1) to DB
+   Write config.json alongside weights
+```
+
+Key concept — **loss**: a number measuring how wrong the model's
+predictions are. Training tries to make this number smaller.
+Lower loss = better predictions.
+
+Key concept — **epoch**: one complete pass through all training images.
+Each epoch the model gets slightly better (loss goes down).
+
+Key concept — **backpropagation**: the math that figures out which
+weights to adjust and by how much to reduce the loss. You never
+touch this — PyTorch handles it with `loss.backward()`.
+
+---
+
+### dataset.py — The Data Loader
+
+This script does one job: given a list of image records from the DB,
+split them fairly into train/val/test.
+
+```
+1. QUERY DB
+   Gets all images matching your filters (band, setting, etc.)
+   Each image record has: file path, true class, acquisition metadata
+
+2. GROUP BY ACQUISITION KEY
+   Groups images that came from the same physical measurement:
+   (target_type, band, depression_angle, azimuth_angle)
+   These groups must never be split across train/test
+
+3. SHUFFLE AND SPLIT
+   Uses a fixed random seed (42) so results are reproducible
+   85% of acquisition groups → training pool
+   From that pool: 85% train, 15% val
+   Remaining 15% of acquisition groups → test
+
+4. CREATE PYTORCH DATASETS
+   Wraps each split in a Dataset object
+   Dataset.__getitem__ is called for each image:
+     - Opens the image file
+     - Applies the transform (resize, normalize)
+     - Returns (image tensor, label, image_id)
+```
+
+Key concept — **seed**: a starting number for random operations.
+Same seed = same split every time = reproducible experiments.
+
+Key concept — **DataLoader**: a wrapper that feeds images to the
+model in batches, in parallel, using multiple CPU workers.
+
+---
+
+### eval_rotation.py — The Rotation Sensitivity Script
+
+```
+1. LOAD MODEL
+   Finds the experiment folder in models/saved/
+   Reads config.json to get class names and model type
+   Loads weights.pt into the model
+
+2. LOAD TEST IMAGES FROM DB
+   Same acquisition-key split logic as dataset.py
+   Only loads the test portion (the held-out 15%)
+
+3. FOR EACH ROTATION ANGLE (0°, 15°, 30° ... 180°)
+   Creates a RotatedDataset — same as normal dataset but:
+     __getitem__ rotates the image before the standard transform
+     Rotation is done with PIL (Python image library) on the fly
+     No rotated images saved to disk — generated in memory, used, discarded
+
+4. RUN INFERENCE
+   Feeds all (rotated) test images through the model
+   Records predicted class for each image
+   Compares to true class → calculates accuracy
+
+5. PRINT TABLE
+   Shows accuracy at each rotation angle
+   Shows drop vs 0° baseline
+   Saves results to logs/rotation_sensitivity.json
+```
+
+Key concept — **inference**: running images through a trained model
+to get predictions. No learning happens — weights stay fixed.
+`torch.no_grad()` tells PyTorch not to track gradients (faster, less memory).
+
+Key concept — **PIL rotation**: `image.rotate(45)` rotates the image
+45° counterclockwise, fills the corners with black. Simple, fast,
+no disk I/O.
+
+---
+
+### models/convnext_small.py — A Model File (Example)
+
+Every model file follows the same pattern:
+
+```python
+def build_model(num_classes):
+    # 1. Load ConvNeXt-Small pretrained on ImageNet
+    model = torchvision.models.convnext_small(pretrained=True)
+
+    # 2. Replace the final layer (1000 ImageNet classes → our N classes)
+    model.classifier[2] = nn.Linear(768, num_classes)
+
+    return model
+
+def get_transform():
+    # Describes image preprocessing:
+    # - Resize to 224×224 (ConvNeXt's expected input size)
+    # - Convert to tensor (numpy array → PyTorch tensor)
+    # - Normalize pixel values to ImageNet mean/std
+    return transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225]),
+    ])
+```
+
+When you build shayasarnet.py, it will have the same two functions.
+The internals will use e2cnn layers instead of ConvNeXt layers —
+but the interface is identical. That's the design.
+
+---
+
 ## Key Files Reference
 
 | File | Purpose |
