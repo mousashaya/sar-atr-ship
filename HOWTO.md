@@ -599,6 +599,92 @@ but the interface is identical. That's the design.
 
 ---
 
+## Looking Inside a Model File
+
+Run this anytime to inspect what's inside a trained model:
+
+```bash
+source venv/bin/activate
+python3 inspect_model.py
+```
+
+Output looks like this (from exp_108, ConvNeXt-Small, 40 classes):
+
+```
+Total layers: 344
+
+First 10 layers:
+  features.0.0.weight                                     shape=[96, 3, 4, 4]  params=4,608
+  features.0.0.bias                                       shape=[96]  params=96
+  features.0.1.weight                                     shape=[96]  params=96
+  features.0.1.bias                                       shape=[96]  params=96
+  features.1.0.layer_scale                                shape=[96, 1, 1]  params=96
+  features.1.0.block.0.weight                             shape=[96, 1, 7, 7]  params=4,704
+  features.1.0.block.0.bias                               shape=[96]  params=96
+  features.1.0.block.2.weight                             shape=[96]  params=96
+  features.1.0.block.2.bias                               shape=[96]  params=96
+  features.1.0.block.3.weight                             shape=[384, 96]  params=36,864
+
+Total parameters: 49,485,448
+```
+
+**What you're looking at:**
+
+The weights file is a dictionary — layer names mapped to matrices of
+floating point numbers. Each row is one layer. The columns mean:
+
+- **name** — where this layer sits in the network (features.0 = first
+  stage, features.1 = second stage, etc.)
+- **shape** — dimensions of the weight matrix
+- **params** — total numbers in that matrix (multiply all shape values)
+
+**Line by line explanation:**
+
+`features.0.0.weight  shape=[96, 3, 4, 4]  params=4,608`
+The very first layer — the "stem". Learns 96 different filters, each
+looking at a 4×4 pixel patch across 3 color channels (RGB). Each filter
+is a small detector — one might detect horizontal edges, another vertical
+edges, another texture. 96 × 3 × 4 × 4 = 4,608 numbers.
+
+`features.0.0.bias  shape=[96]  params=96`
+One bias value per filter — like an offset or threshold. Every filter
+has a weight matrix AND a bias. Standard in all neural networks.
+
+`features.0.1.weight / features.0.1.bias  shape=[96]`
+These belong to a LayerNorm — a normalization layer that keeps values
+in a stable range during training. Prevents numbers from getting too
+large or too small. One value per channel.
+
+`features.1.0.layer_scale  shape=[96, 1, 1]  params=96`
+A scaling factor per channel — ConvNeXt's way of stabilizing training.
+Small tweak, large impact on convergence.
+
+`features.1.0.block.0.weight  shape=[96, 1, 7, 7]  params=4,704`
+ConvNeXt's signature — a depthwise convolution with a large 7×7 kernel.
+The 1 means each filter only looks at one channel at a time. The 7×7
+size means it sees a larger neighborhood than traditional 3×3 filters —
+this is what makes ConvNeXt good at capturing broader patterns.
+
+`features.1.0.block.3.weight  shape=[384, 96]  params=36,864`
+A fully connected layer inside the block — expands from 96 channels to
+384. This is where channels "talk to each other." Already the biggest
+layer so far, and we're only 10 layers in.
+
+**The overall pattern (repeats 344 times):**
+Filter → Normalize → Scale → Depthwise conv → Expand channels.
+Channel sizes grow as you go deeper: 96 → 192 → 384 → 768.
+Early layers detect edges. Later layers detect "looks like a truck cab."
+
+**The file format:**
+Not protobuf. PyTorch uses Python's pickle serializer — essentially a
+serialized dictionary. You cannot open it in a text editor but you can
+always inspect it with inspect_model.py.
+
+**To inspect a different model**, edit inspect_model.py and change
+the path to any weights.pt in models/saved/.
+
+---
+
 ## Key Files Reference
 
 | File | Purpose |
