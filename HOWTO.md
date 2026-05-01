@@ -262,6 +262,169 @@ cat logs/soc_cascade.json
 
 ---
 
+## Understanding the Code Structure (Start Here)
+
+This section explains how the pieces fit together — written for someone
+new to Python who wants to understand the project before modifying it.
+
+---
+
+### The Big Picture
+
+```
+Image files (external drive)
+        ↓
+   Database (PostgreSQL)  ← stores metadata, results, experiment records
+        ↓
+   dataset.py            ← loads images, applies train/val/test split
+        ↓
+   train.py              ← trains a model, saves weights + config to disk
+        ↓
+   models/saved/         ← where trained models live
+        ↓
+   eval_rotation.py      ← loads a trained model, tests it, prints results
+```
+
+Everything flows top to bottom. The database is the glue — it knows
+where every image lives on disk and what class it belongs to.
+
+---
+
+### How a Model File Works
+
+Every model lives in `models/` as its own Python file.
+Example: `models/convnext_small.py`
+
+Every model file has exactly two functions that the rest of the
+pipeline expects:
+
+```python
+def build_model(num_classes):
+    # Creates the neural network
+    # num_classes = 40 for our vehicle classification
+    # Returns the model object
+    ...
+
+def get_transform():
+    # Describes how to prepare an image before feeding it to the model
+    # Resize, normalize pixel values, convert to tensor
+    # Returns a transform object
+    ...
+```
+
+When you add ShayaSARNet, you create `models/shayasarnet.py` with
+these same two functions. The rest of the pipeline works unchanged.
+
+---
+
+### How train.py Uses a Model
+
+train.py is the main training script. When you run:
+
+```bash
+python3 scripts/train.py --model convnext_small --name my_experiment
+```
+
+train.py does this:
+1. Reads `--model convnext_small`
+2. Imports `models/convnext_small.py`
+3. Calls `build_model(num_classes=40)` to create the network
+4. Calls `get_transform()` to know how to prepare images
+5. Loads images from DB using dataset.py
+6. Trains for N epochs, saves best weights to `models/saved/exp_NNN_my_experiment/`
+7. Writes `config.json` alongside the weights (stores accuracy, class names, settings)
+
+You never need to modify train.py to add a new model — just create
+the model file and pass `--model shayasarnet` on the command line.
+
+---
+
+### How dataset.py Works
+
+dataset.py is responsible for one important job: making sure the
+train/test split is fair (no data leakage).
+
+It queries the database for all images matching your filters
+(band, setting, etc), then groups them by acquisition key:
+  (target_type, band, depression_angle, azimuth_angle)
+
+All images in the same acquisition group go to the same split.
+This is what prevents cross-polarization leakage.
+
+You never call dataset.py directly — train.py calls it internally.
+
+---
+
+### What Lives in models/saved/
+
+After training, each experiment gets its own folder:
+
+```
+models/saved/
+  exp_108_rot_baseline_full_v1/
+    weights.pt     ← the trained model weights (the "brain")
+    config.json    ← settings, class names, best accuracy
+```
+
+config.json looks like:
+```json
+{
+  "class_names": ["Buick_Excelle_GT", "Buick_GL8", ...],
+  "best_val_acc": 97.2,
+  "model_type": "convnext_small",
+  "setting": "SOC_40classes"
+}
+```
+
+The eval scripts read config.json to know how the model was built,
+then load weights.pt to get the trained weights.
+
+---
+
+### How eval_rotation.py Works
+
+eval_rotation.py demonstrates rotation sensitivity:
+
+1. Loads a trained model from models/saved/
+2. Loads test images from the DB
+3. For each rotation angle (0°, 15°, 30° ... 180°):
+   - Rotates each image on-the-fly in memory (no files saved to disk)
+   - Feeds rotated images through the model
+   - Records accuracy
+4. Prints the table showing accuracy drop at each angle
+
+The rotation happens inside the Dataset class in `__getitem__` —
+this is called automatically for each image as it's loaded.
+
+---
+
+### What You Touch When Adding ShayaSARNet
+
+Only ONE new file needed:
+```
+models/shayasarnet.py    ← create this
+```
+
+Everything else — train.py, dataset.py, eval_rotation.py, the DB,
+the pipeline — stays exactly the same. That's the payoff of the
+existing structure.
+
+Then train it:
+```bash
+python3 scripts/train.py --model shayasarnet --band X \
+    --config 40class --setting SOC_40classes \
+    --epochs 30 --name shayasarnet_v1
+```
+
+Then eval it:
+```bash
+python3 scripts/eval_rotation.py --model shayasarnet_v1
+```
+
+Compare the curve to rot_baseline_full_v1. That's the experiment.
+
+---
+
 ## Key Files Reference
 
 | File | Purpose |
