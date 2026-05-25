@@ -1,0 +1,372 @@
+\documentclass[journal]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{xcolor}
+
+\begin{document}
+
+\title{ATRNet-STAR: Depression Angle Diversity, Few-Shot Recognition,
+and Cross-Dataset Generalization in SAR Automatic Target Recognition}
+
+\author{Mousa~Shaya,~\IEEEmembership{}
+\thanks{M. Shaya is with Shaya Software and Systems LLC, Acton, MA, and
+Arizona State University, Tempe, AZ (e-mail: mshaya01.ml@gmail.com).}}
+
+\maketitle
+
+\begin{abstract}
+Synthetic Aperture Radar (SAR) Automatic Target Recognition (ATR) requires
+models that generalize across depression angles, sensor configurations, and
+datasets, yet labeled SAR imagery is scarce and expensive to acquire. We
+present a systematic study of these generalization challenges using the
+ATRNet-STAR dataset (40 vehicle classes, 4 depression angles) and the MSTAR
+benchmark (10 military vehicle classes). We make six contributions:
+(1)~a depression angle ablation showing that adding a single 60\textdegree{}
+view to a 15\textdegree{}-only baseline improves EOC accuracy by +30.4~pp;
+(2)~a data efficiency analysis showing that multi-angle training with as few
+as 25 images per vehicle per angle surpasses a model trained on thousands of
+single-angle images; (3)~a finding that neither angle-weighted sampling nor
+test-time augmentation (TTA) improves EOC performance---TTA reduces accuracy
+by 24.3~pp---confirming that angle invariance requires real multi-angle data;
+(4)~a few-shot prototypical classifier achieving 98\%+ accuracy with only 5
+reference images per class, replicated on ATRNet-STAR and MSTAR; (5)~a
+cross-dataset transfer experiment revealing a 38~pp SAR-to-SAR domain gap
+(61.1\% ATRNet-STAR$\to$MSTAR vs.\ 99.1\% MSTAR-specific); and (6)~a
+demonstration that optical pretrained features (DINOv2, 6.1\%) are
+ineffective for SAR ATR, motivating domain-specific approaches.
+\end{abstract}
+
+\begin{IEEEkeywords}
+synthetic aperture radar, automatic target recognition, depression angle,
+few-shot learning, prototypical networks, domain adaptation, ConvNeXt
+\end{IEEEkeywords}
+
+% ── I. Introduction ────────────────────────────────────────────────────────────
+\section{Introduction}
+
+SAR ATR is operationally critical: SAR sensors image through clouds and at
+night, making them uniquely valuable for persistent surveillance. Deploying
+ATR systems in practice surfaces three generalization challenges that
+laboratory benchmarks often obscure.
+
+\textit{The depression angle problem.} A vehicle imaged at 15\textdegree{}
+looks fundamentally different from the same vehicle at 60\textdegree{} due to
+layover, foreshortening, and shadow geometry. Most published results report
+Standard Operating Condition (SOC) accuracy---train and test at the same
+angle---which inflates operational expectations. Extended Operating Condition
+(EOC) evaluation, where the test angle is withheld, is a harder and more
+realistic measure.
+
+\textit{The data scarcity problem.} Unlike optical vision, SAR ATR datasets
+are measured in thousands of examples. This motivates few-shot approaches.
+
+\textit{The domain gap problem.} Features learned on one SAR dataset do not
+transfer freely to another. Understanding the magnitude of these gaps is
+essential for building systems that generalize.
+
+We address all three with a unified experimental framework. Our primary
+dataset is ATRNet-STAR~\cite{atrnet}, a large-scale SAR vehicle dataset
+collected at four depression angles (15\textdegree, 30\textdegree,
+45\textdegree, 60\textdegree) across 40 vehicle classes. We supplement with
+MSTAR~\cite{mstar}, the canonical 10-class military vehicle benchmark. Our
+backbone is ConvNeXt-Small~\cite{convnext}, fine-tuned from ImageNet weights,
+which substantially outperforms DINOv2~\cite{dinov2} on SAR imagery.
+
+% ── II. Related Work ───────────────────────────────────────────────────────────
+\section{Related Work}
+
+\textbf{SAR ATR benchmarks.} MSTAR~\cite{mstar} remains the most widely
+cited benchmark, with CNN accuracies of 97--99\% on the standard SOC task and
+a well-studied EOC protocol. ATRNet-STAR~\cite{atrnet} extends this to 40
+classes across four depression angles, spanning up to 45\textdegree{} of
+angular change versus the 13\textdegree{} change in MSTAR's standard EOC.
+
+\textbf{Depression angle generalization.} Performance degradation under
+angular variation is well documented~\cite{atrnet}. Sparse representation,
+complex-valued networks, and multi-view transformers have been applied, but
+systematic study of which angles contribute most and how many samples per
+angle are needed has not been reported.
+
+\textbf{Few-shot SAR ATR.} Prototypical networks~\cite{proto} have been
+applied to SAR ATR. DGP-Net~\cite{dgpnet} proposes a dense graph convolutional
+network for few-shot MSTAR tasks, improving prior methods by over 4\%. We
+differ in operating on ATRNet-STAR's 40-class problem and show that a frozen
+backbone with nearest-centroid classification achieves 98\%+ accuracy with 5
+reference images---no specialized architecture required.
+
+\textbf{Foundation models for SAR.} SARATR-X~\cite{sarx} trains a
+self-supervised backbone on 0.18M unlabeled SAR samples. Our DINOv2
+experiment provides complementary motivation: optical SSL pretraining (6.1\%)
+is essentially useless for SAR, confirming that domain-specific approaches are
+necessary.
+
+% ── III. Datasets and Methods ──────────────────────────────────────────────────
+\section{Datasets and Methods}
+
+\subsection{ATRNet-STAR}
+ATRNet-STAR contains SAR chips of 40 ground vehicle classes at four depression
+angles (15\textdegree, 30\textdegree, 45\textdegree, 60\textdegree). Images
+are single-polarization magnitude chips converted to 8-bit grayscale via
+log-magnitude normalization. \textit{SOC:} 70/15/15 train/val/test split
+stratified by class. \textit{EOC:} train on 15\textdegree{} only, test on
+\{30\textdegree, 45\textdegree, 60\textdegree\}.
+
+\subsection{MSTAR}
+MSTAR contains 10 military vehicle classes at two angles: 17\textdegree{}
+(training) and 15\textdegree{} (test), stored as Phoenix binary complex
+float32. Standard SOC split: 3,128 train / 543 val / 3,203 test.
+
+\subsection{Model Architecture}
+We use ConvNeXt-Small pretrained on ImageNet-1K. The classification head is
+replaced with a linear layer sized to the target number of classes. Training
+uses AdamW (lr=$10^{-4}$) with cross-entropy loss and random
+horizontal/vertical flips and rotation augmentation.
+
+\subsection{Prototypical Classification}
+We extract features from the penultimate layer using a forward hook. Given $N$
+reference images per class, per-class prototypes are computed by averaging
+feature vectors. Test samples are classified by nearest centroid under
+Euclidean distance. The backbone is frozen---no test-time training is required.
+
+\subsection{Code Availability}
+All code is publicly available at \url{https://github.com/mousashaya/sar-atr-ship}.
+
+% ── IV. Experiments ────────────────────────────────────────────────────────────
+\section{Experiments}
+
+\subsection{SOC Baselines}
+\textbf{ATRNet-STAR SOC} (40 classes, 4 angles): 97.2\% test accuracy.
+\textbf{MSTAR SOC} (10 classes, 17\textdegree{}$\to$15\textdegree{}): 99.1\%
+test accuracy, matching the published 97--99\% range~\cite{mstar}.
+
+\subsection{EOC Baseline and Angle Ablation}
+
+Fig.~\ref{fig:umap} visualizes the feature space under SOC and EOC backbones.
+The SOC backbone places test images near their correct vehicle clusters;
+the EOC backbone (trained on 15\textdegree{} only) produces an undifferentiated
+scatter at 43.7\% accuracy---a 53.5~pp gap versus the SOC ceiling.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{soc_eoc_overlay.png}
+  \caption{UMAP of the 768-D feature space. Gray: 15\textdegree{} reference
+  images. Colored: test images at 30\textdegree, 45\textdegree, 60\textdegree.
+  \textbf{(a)}~SOC backbone: test images land near correct vehicle clusters.
+  \textbf{(b)}~EOC backbone: test images scatter randomly, explaining the
+  43.7\% baseline.}
+  \label{fig:umap}
+\end{figure}
+
+Table~\ref{tab:ablation} shows the effect of progressively adding training
+angles. Adding 60\textdegree{} alone accounts for +30.4~pp---the majority of
+the total +42.4~pp gain from all additional angles. Large angular contrast
+forces the model to learn angle-invariant representations.
+
+\begin{table}[t]
+  \caption{Angle Ablation: EOC Test Accuracy (\%)}
+  \label{tab:ablation}
+  \centering
+  \begin{tabular}{lcc}
+    \toprule
+    Training Angles & Accuracy & $\Delta$ vs.\ Baseline \\
+    \midrule
+    15\textdegree{} only (EOC baseline) & 43.7 & --- \\
+    15\textdegree{} + 60\textdegree{} & 74.1 & +30.4 \\
+    15\textdegree{} + 30\textdegree{} + 60\textdegree{} & 78.3 & +34.6 \\
+    All 4 angles ($N$=200) & 86.1 & +42.4 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Data Efficiency}
+
+Table~\ref{tab:efficiency} shows accuracy versus $N$ images per (vehicle,
+angle) group, tested on held-out 15\textdegree{} images. The key finding is
+the \textit{crossover at $N$=25}: multi-angle training with only 25 images per
+vehicle per angle already surpasses the EOC baseline (43.7\%) achieved by a
+model trained on thousands of single-angle images. Angle diversity is more
+valuable than data volume. The curve flattens above $N$=400 (0.4~pp gain from
+400 to 500), suggesting diminishing returns beyond this threshold.
+
+\begin{table}[t]
+  \caption{Data Efficiency: Test Accuracy (\%) vs.\ $N$ per (Vehicle, Angle)}
+  \label{tab:efficiency}
+  \centering
+  \begin{tabular}{ccc}
+    \toprule
+    $N$ & Accuracy & vs.\ EOC Baseline \\
+    \midrule
+    5   & 10.8 & --- \\
+    10  & 21.7 & --- \\
+    25  & 49.0 & +5.3 \\
+    50  & 65.8 & +22.1 \\
+    100 & 77.0 & +33.3 \\
+    200 & 86.1 & +42.4 \\
+    400 & 89.2 & +45.5 \\
+    500 & 89.6 & +45.9 \\
+    Full & 97.2 & +53.5 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Negative Results: What Does Not Work}
+
+\textbf{Angle-weighted sampling.} Oversampling rarer angles using
+inverse-frequency weights is consistently worse than uniform sampling
+(Table~\ref{tab:negative}). Weighting does not help because the bottleneck is
+data volume per angle, not sampling bias.
+
+\textbf{Test-time augmentation (TTA).} TTA with $k$=7 augmented views reduces
+accuracy from 89.8\% to 65.6\% ($-$24.3~pp). In optical vision, geometric
+augmentations produce semantically equivalent views; in SAR, backscatter is
+highly sensitive to azimuth and depression angle, making augmented views
+out-of-distribution. Angle invariance cannot be approximated through
+augmentation---it requires actual multi-angle training data.
+
+\begin{table}[t]
+  \caption{Negative Results: Weighted Sampling ($N$=200)}
+  \label{tab:negative}
+  \centering
+  \begin{tabular}{cccc}
+    \toprule
+    $N$ & Baseline & Weighted & $\Delta$ \\
+    \midrule
+    25  & 40.8 & 40.8 & 0.0 \\
+    50  & 55.2 & 52.5 & $-$2.7 \\
+    100 & 70.4 & 68.1 & $-$2.3 \\
+    200 & 86.1 & 80.1 & $-$6.0 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Few-Shot Prototypical Classification}
+
+Table~\ref{tab:proto} shows prototypical classification accuracy using the
+frozen SOC backbone. On ATRNet-STAR, 5 reference images per class achieves
+98.2\%---within 0.3~pp of using 100 references. The curve saturates
+immediately, demonstrating that a well-trained backbone produces features so
+discriminative that nearest-centroid classification requires minimal
+calibration data. DINOv2, by contrast, achieves near-chance performance
+(6.1\% for 40 classes, random chance $=$ 2.5\%), confirming that optical
+pretraining is orthogonal to SAR ATR. On MSTAR, a \textit{single} reference
+image per class achieves 98.3\%, statistically indistinguishable from the
+99.1\% SOC ceiling.
+
+\begin{table}[t]
+  \caption{Few-Shot Prototypical Accuracy (\%) vs.\ $N$ Reference Images/Class}
+  \label{tab:proto}
+  \centering
+  \begin{tabular}{ccccc}
+    \toprule
+    $N$ & ATRNet-STAR & DINOv2 & MSTAR \\
+    \midrule
+    1  & ---  & ---  & 98.3 \\
+    5  & 98.2 & 6.1  & 99.1 \\
+    10 & 98.4 & 6.9  & 99.2 \\
+    25 & 98.4 & 8.4  & 99.2 \\
+    50 & 98.5 & 8.6  & 99.1 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Cross-Dataset Transfer}
+
+Using the ATRNet-STAR backbone as a feature extractor on MSTAR without any
+MSTAR training, prototypical classification reaches 61.1\% with full reference
+sets versus 99.1\% for the MSTAR-specific backbone---a 38~pp gap quantifying
+the SAR-to-SAR domain shift. Placed in context: DINOv2 (optical pretraining)
+achieves $\sim$12\%; ATRNet-STAR (SAR, different targets) achieves 61.1\%;
+MSTAR-specific training achieves 99.1\%. Transfer accuracy scales with domain
+proximity: optical$\to$SAR transfer is negligible; SAR$\to$SAR transfer is
+meaningful but insufficient for deployment.
+
+% ── V. Discussion ─────────────────────────────────────────────────────────────
+\section{Discussion}
+
+\textbf{Why does 60\textdegree{} add so much?} The large angular contrast
+between 60\textdegree{} and the 15\textdegree{} test condition forces the
+network to discover angle-invariant features rather than angle-specific
+artifacts, acting as a strong regularizer.
+
+\textbf{Why does TTA fail in SAR?} In optical vision, geometric augmentations
+produce semantically equivalent views. In SAR, backscatter intensity is
+highly sensitive to azimuth and depression angle; rotated chips fall outside
+the training distribution. This distinguishes SAR ATR from most optical tasks.
+
+\textbf{Practical implications.} For new SAR ATR deployments: (1)~train a
+backbone on whatever labeled data is available, even from a different dataset;
+(2)~use prototypical classification for adaptation with a handful of reference
+images; (3)~prioritize collecting reference images at multiple depression
+angles over maximizing count at a single angle.
+
+\textbf{Limitations.} All experiments use single-polarization magnitude
+images. Dual-polarization and complex-valued inputs likely carry additional
+discriminative information. Both datasets are collected in controlled
+conditions; performance on operational SAR imagery with extended clutter
+and non-cooperative targets may differ.
+
+% ── VI. Conclusion ─────────────────────────────────────────────────────────────
+\section{Conclusion}
+
+We characterized SAR ATR generalization along three axes---depression angle
+diversity, data quantity, and cross-dataset transfer---with six findings:
+(1)~adding 60\textdegree{} to a 15\textdegree{}-only baseline yields +30.4~pp,
+more than half the total gain from all additional angles;
+(2)~25 images per vehicle per angle already surpasses thousands of single-angle
+images, with diminishing returns above $N$=400;
+(3)~weighted sampling and TTA both fail, with TTA actively hurting
+($-$24.3~pp);
+(4)~a frozen SOC backbone enables 98\%+ few-shot accuracy with 5 reference
+images, replicated across ATRNet-STAR and MSTAR;
+(5)~SAR-to-SAR transfer reaches 61.1\%, far above optical transfer but
+below task-specific training; and
+(6)~DINOv2 achieves $\sim$6--12\% on a 40-class SAR problem, motivating
+SAR-specific pretraining.
+
+% ── Acknowledgments ───────────────────────────────────────────────────────────
+\section*{Acknowledgments}
+Code implementation and manuscript preparation were assisted by Claude
+(Anthropic). All experimental design, interpretation, and scientific claims
+are the sole responsibility of the author.
+
+% ── References ────────────────────────────────────────────────────────────────
+\begin{thebibliography}{1}
+
+\bibitem{atrnet}
+Y.~Liu \textit{et al.}, ``ATRNet-STAR: A Large Dataset and Benchmark Towards
+Remote Sensing Object Recognition in the Wild,'' submitted to \textit{IEEE
+Trans. Pattern Anal. Mach. Intell.}
+
+\bibitem{mstar}
+V.~R.~Lalmani, ``MSTAR Dataset 10 Classes,'' IEEE DataPort, 2025,
+doi:~10.21227/bfp9-7019.
+
+\bibitem{convnext}
+Z.~Liu \textit{et al.}, ``A ConvNet for the 2020s,'' in \textit{Proc.\
+IEEE/CVF CVPR}, 2022, pp.~11976--11986.
+
+\bibitem{dinov2}
+M.~Oquab \textit{et al.}, ``DINOv2: Learning Robust Visual Features without
+Supervision,'' \textit{arXiv:2304.07193}, 2023.
+
+\bibitem{proto}
+J.~Snell, K.~Swersky, and R.~S.~Zemel, ``Prototypical Networks for Few-shot
+Learning,'' \textit{arXiv:1703.05175}, 2017.
+
+\bibitem{dgpnet}
+X.~Zhou, Q.~Wei, and Y.~Zhang, ``SAR Target Depression Angle Invariant
+Recognition of Few-Shot Learning Via Dense Graph Prototype Network,''
+\textit{IEEE J. Sel. Topics Appl. Earth Observ. Remote Sens.}, Jan.~2025,
+doi:~10.1109/JSTARS.2025.3586129.
+
+\bibitem{sarx}
+W.~Li \textit{et al.}, ``SARATR-X: Towards Building A Foundation Model for
+SAR Target Recognition,'' 2025.
+
+\end{thebibliography}
+
+\end{document}

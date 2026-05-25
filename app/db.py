@@ -282,3 +282,237 @@ def get_shiprs_filters() -> dict:
         return result
     finally:
         conn.close()
+
+
+# ── OpenSARShip queries ───────────────────────────────────────────────────────
+
+def get_opensar_filters() -> dict:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        result = {}
+        for col in ('ship_type', 'polarization'):
+            cur.execute(f"SELECT DISTINCT {col} FROM defense.opensar_images "
+                        f"WHERE {col} IS NOT NULL ORDER BY {col}")
+            result[col] = [r[col] for r in cur.fetchall()]
+        return result
+    finally:
+        conn.close()
+
+
+def get_opensar_image_list(ship_type='', polarization='', limit=200, offset=0):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        where = ['local_path IS NOT NULL']
+        params = []
+        if ship_type:
+            where.append('ship_type = %s'); params.append(ship_type)
+        if polarization:
+            where.append('polarization = %s'); params.append(polarization)
+        w = ' AND '.join(where)
+
+        cur.execute(f"SELECT COUNT(*) FROM defense.opensar_images WHERE {w}", params)
+        total = cur.fetchone()['count']
+
+        cur.execute(f"""
+            SELECT id, image_id, ship_type, ship_type_ais, ship_length_m,
+                   ship_width_m, polarization, scene_id, local_path
+            FROM defense.opensar_images WHERE {w}
+            ORDER BY ship_type, id
+            LIMIT %s OFFSET %s
+        """, params + [limit, offset])
+        return [dict(r) for r in cur.fetchall()], total
+    finally:
+        conn.close()
+
+
+def get_opensar_image(image_id: int) -> dict:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM defense.opensar_images WHERE id = %s", (image_id,))
+        row = cur.fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()
+
+
+# ── MSTAR queries ─────────────────────────────────────────────────────────────
+
+def get_mstar_filters() -> dict:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT DISTINCT target_short FROM defense.mstar_images WHERE target_short IS NOT NULL ORDER BY target_short")
+        targets = [r['target_short'] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT desired_depression FROM defense.mstar_images WHERE desired_depression IS NOT NULL ORDER BY desired_depression")
+        depressions = [r['desired_depression'] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT split FROM defense.mstar_images WHERE split IS NOT NULL ORDER BY split")
+        splits = [r['split'] for r in cur.fetchall()]
+        return {'targets': targets, 'depressions': depressions, 'splits': splits}
+    finally:
+        conn.close()
+
+
+def get_mstar_image_list(target='', depression='', split='', limit=200, offset=0):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        where = ['local_path IS NOT NULL']
+        params = []
+        if target:
+            where.append('target_short = %s'); params.append(target)
+        if depression:
+            where.append('desired_depression = %s'); params.append(float(depression))
+        if split:
+            where.append('split = %s'); params.append(split)
+        w = ' AND '.join(where)
+        cur.execute(f"SELECT COUNT(*) FROM defense.mstar_images WHERE {w}", params)
+        total = cur.fetchone()['count']
+        cur.execute(f"""
+            SELECT id, filename, target_short, desired_depression, azimuth_angle,
+                   polarization, split, serial_number
+            FROM defense.mstar_images WHERE {w}
+            ORDER BY target_short, desired_depression, azimuth_angle
+            LIMIT %s OFFSET %s
+        """, params + [limit, offset])
+        return [dict(r) for r in cur.fetchall()], total
+    finally:
+        conn.close()
+
+
+def get_mstar_image(image_id: int) -> dict:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM defense.mstar_images WHERE id = %s", (image_id,))
+        row = cur.fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()
+
+
+# ── HRSID queries ─────────────────────────────────────────────────────────────
+
+def get_hrsid_filters() -> dict:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT DISTINCT scene FROM defense.hrsid_chips WHERE scene IS NOT NULL ORDER BY scene")
+        scenes = [r['scene'] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT split FROM defense.hrsid_chips WHERE split IS NOT NULL ORDER BY split")
+        splits = [r['split'] for r in cur.fetchall()]
+        return {'scene': scenes, 'split': splits}
+    finally:
+        conn.close()
+
+
+def get_hrsid_chip_list(scene='', split='', min_area=0, limit=200, offset=0):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        where = ['local_path IS NOT NULL']
+        params = []
+        if scene:
+            where.append('scene = %s'); params.append(scene)
+        if split:
+            where.append('split = %s'); params.append(split)
+        if min_area > 0:
+            where.append('area >= %s'); params.append(min_area)
+        w = ' AND '.join(where)
+
+        cur.execute(f"SELECT COUNT(*) FROM defense.hrsid_chips WHERE {w}", params)
+        total = cur.fetchone()['count']
+
+        cur.execute(f"""
+            SELECT id, chip_id, scene, split, bbox_w, bbox_h, area,
+                   chip_width, chip_height, local_path
+            FROM defense.hrsid_chips WHERE {w}
+            ORDER BY area DESC, id
+            LIMIT %s OFFSET %s
+        """, params + [limit, offset])
+        return [dict(r) for r in cur.fetchall()], total
+    finally:
+        conn.close()
+
+
+def get_hrsid_chip(chip_id: int) -> dict:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM defense.hrsid_chips WHERE id = %s", (chip_id,))
+        row = cur.fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()
+
+
+# ── FUSAR-Ship queries ────────────────────────────────────────────────────────
+
+def get_fusar_filters() -> dict:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT DISTINCT category FROM defense.fusar_images WHERE category IS NOT NULL ORDER BY category")
+        categories = [r['category'] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT polar_mode FROM defense.fusar_images WHERE polar_mode IS NOT NULL ORDER BY polar_mode")
+        polar_modes = [r['polar_mode'] for r in cur.fetchall()]
+        return {'category': categories, 'polar_mode': polar_modes}
+    finally:
+        conn.close()
+
+
+def get_fusar_subcategories(category='') -> list:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        if category:
+            cur.execute("SELECT DISTINCT subcategory FROM defense.fusar_images WHERE category=%s AND subcategory IS NOT NULL ORDER BY subcategory", (category,))
+        else:
+            cur.execute("SELECT DISTINCT subcategory FROM defense.fusar_images WHERE subcategory IS NOT NULL ORDER BY subcategory")
+        return [r['subcategory'] for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_fusar_image_list(category='', subcategory='', polar_mode='', split='', limit=200, offset=0):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        where = ['local_path IS NOT NULL']
+        params = []
+        if category:
+            where.append('category = %s'); params.append(category)
+        if subcategory:
+            where.append('subcategory = %s'); params.append(subcategory)
+        if polar_mode:
+            where.append('polar_mode = %s'); params.append(polar_mode)
+        if split:
+            where.append('split = %s'); params.append(split)
+        w = ' AND '.join(where)
+
+        cur.execute(f"SELECT COUNT(*) FROM defense.fusar_images WHERE {w}", params)
+        total = cur.fetchone()['count']
+
+        cur.execute(f"""
+            SELECT id, image_id, category, subcategory, polar_mode,
+                   ship_length_m, ship_width_m, look_angle, split
+            FROM defense.fusar_images WHERE {w}
+            ORDER BY category, subcategory, id
+            LIMIT %s OFFSET %s
+        """, params + [limit, offset])
+        return [dict(r) for r in cur.fetchall()], total
+    finally:
+        conn.close()
+
+
+def get_fusar_image(image_id: int) -> dict:
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM defense.fusar_images WHERE id = %s", (image_id,))
+        row = cur.fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()

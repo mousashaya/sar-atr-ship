@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FUSAR-Ship Viewer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f1117; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+    .app-header { background: #1a1d27; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #2a2d3a; flex-shrink: 0; }
+    .app-title { font-size: 1.1rem; font-weight: 600; color: #7eb8f7; }
+    .header-nav { display: flex; gap: 8px; }
+    .nav-btn { padding: 6px 14px; border-radius: 6px; text-decoration: none; color: #aaa; font-size: 0.85rem; border: 1px solid #2a2d3a; }
+    .nav-btn:hover { background: #2a2d3a; color: #fff; }
+    .nav-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .app-body { display: flex; flex: 1; overflow: hidden; }
+    .sidebar { width: 220px; background: #13161f; padding: 16px; overflow-y: auto; border-right: 1px solid #2a2d3a; flex-shrink: 0; }
+    .sidebar label { display: block; font-size: 0.75rem; color: #888; margin-bottom: 4px; margin-top: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .sidebar select { width: 100%; background: #1a1d27; color: #e0e0e0; border: 1px solid #2a2d3a; border-radius: 6px; padding: 6px 8px; font-size: 0.85rem; }
+    .sidebar .count { font-size: 0.75rem; color: #666; margin-top: 8px; }
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .toolbar { padding: 10px 16px; background: #13161f; border-bottom: 1px solid #2a2d3a; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+    .toolbar button { padding: 5px 12px; border-radius: 5px; border: 1px solid #2a2d3a; background: #1a1d27; color: #ccc; font-size: 0.8rem; cursor: pointer; }
+    .toolbar button:hover { background: #2a2d3a; }
+    .grid-area { flex: 1; overflow-y: auto; padding: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+    .chip { background: #1a1d27; border-radius: 8px; overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s; }
+    .chip:hover { border-color: #2563eb; }
+    .chip.selected { border-color: #f59e0b; }
+    .chip img { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; background: #080a0f; }
+    .chip-label { padding: 6px 8px; font-size: 0.72rem; color: #bbb; line-height: 1.4; }
+    .chip-label strong { color: #e0e0e0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chip-label .sub { color: #7eb8f7; font-size: 0.68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+    .chip-label .meta { color: #555; font-size: 0.65rem; }
+    .detail-panel { width: 320px; background: #13161f; border-left: 1px solid #2a2d3a; padding: 16px; overflow-y: auto; flex-shrink: 0; display: none; }
+    .detail-panel.open { display: block; }
+    .detail-panel img { width: 100%; border-radius: 8px; margin-bottom: 12px; image-rendering: pixelated; background: #080a0f; }
+    .detail-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #1a1d27; font-size: 0.8rem; }
+    .detail-row .lbl { color: #888; flex-shrink: 0; margin-right: 8px; }
+    .detail-row .val { color: #e0e0e0; text-align: right; word-break: break-word; }
+    .detail-section { font-size: 0.7rem; color: #555; text-transform: uppercase; letter-spacing: 0.06em; margin: 12px 0 4px; }
+    .cat-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: 600; margin-bottom: 4px; background: #1e3a5f; color: #7eb8f7; }
+    .sub-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; background: #1a2a1a; color: #6ee7b7; margin-bottom: 10px; }
+    .loading { text-align: center; color: #555; padding: 40px; }
+    .empty { text-align: center; color: #444; padding: 60px 20px; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+  <header class="app-header">
+    <span class="app-title">FUSAR-Ship — Gaofen-3 SAR Ship Chips (1 m, 512×512)</span>
+    <div class="header-nav">
+      <a class="nav-btn" href="/">ATRNet</a>
+      <a class="nav-btn" href="/ships">ShipRS</a>
+      <a class="nav-btn" href="/opensar">OpenSAR</a>
+      <a class="nav-btn" href="/hrsid">HRSID</a>
+      <a class="nav-btn active" href="/fusar">FUSAR</a>
+      <a class="nav-btn" href="/mstar">MSTAR</a>
+      <a class="nav-btn" href="/sar-ships">SAR Re-ID</a>
+      <a class="nav-btn" href="/experiments">Experiments</a>
+    </div>
+  </header>
+
+  <div class="app-body">
+    <div class="sidebar">
+      <div>
+        <label>Category</label>
+        <select id="f-cat" onchange="onCategoryChange()">
+          <option value="">All categories</option>
+          {% for c in category %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Subcategory</label>
+        <select id="f-sub" onchange="loadImages()">
+          <option value="">All subcategories</option>
+        </select>
+      </div>
+      <div>
+        <label>Polarization</label>
+        <select id="f-pol" onchange="loadImages()">
+          <option value="">All</option>
+          {% for p in polar_mode %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Split</label>
+        <select id="f-split" onchange="loadImages()">
+          <option value="">All</option>
+          <option value="train">Train</option>
+          <option value="test">Test</option>
+        </select>
+      </div>
+      <div class="count" id="count-label">Loading...</div>
+    </div>
+
+    <div class="main">
+      <div class="toolbar">
+        <button onclick="loadMore()">Load more</button>
+        <span id="toolbar-info" style="font-size:0.8rem;color:#555;margin-left:8px;"></span>
+      </div>
+      <div class="grid-area">
+        <div class="grid" id="grid"></div>
+        <div class="loading" id="loading" style="display:none">Loading...</div>
+        <div class="empty" id="empty" style="display:none">No images found</div>
+      </div>
+    </div>
+
+    <div class="detail-panel" id="detail-panel">
+      <img id="detail-img" src="" alt="">
+      <div id="detail-cat-badge"></div>
+      <div id="detail-sub-badge"></div>
+      <div class="detail-section">Ship Info</div>
+      <div class="detail-row"><span class="lbl">Category</span><span class="val" id="d-cat"></span></div>
+      <div class="detail-row"><span class="lbl">Subcategory</span><span class="val" id="d-sub"></span></div>
+      <div class="detail-row"><span class="lbl">Length</span><span class="val" id="d-length"></span></div>
+      <div class="detail-row"><span class="lbl">Width</span><span class="val" id="d-width"></span></div>
+      <div class="detail-section">SAR Metadata</div>
+      <div class="detail-row"><span class="lbl">Polarization</span><span class="val" id="d-pol"></span></div>
+      <div class="detail-row"><span class="lbl">Look angle</span><span class="val" id="d-angle"></span></div>
+      <div class="detail-row"><span class="lbl">Resolution</span><span class="val" id="d-res"></span></div>
+      <div class="detail-row"><span class="lbl">Split</span><span class="val" id="d-split"></span></div>
+      <div class="detail-section">Identifiers</div>
+      <div class="detail-row"><span class="lbl">MMSI</span><span class="val" id="d-mmsi"></span></div>
+      <div class="detail-row"><span class="lbl">Image ID</span><span class="val" id="d-imgid" style="font-size:0.7rem;"></span></div>
+    </div>
+  </div>
+
+<script>
+  let offset = 0;
+  const LIMIT = 200;
+  let total = 0;
+  let selectedId = null;
+
+  async function onCategoryChange() {
+    const cat = document.getElementById('f-cat').value;
+    const subSel = document.getElementById('f-sub');
+    subSel.innerHTML = '<option value="">All subcategories</option>';
+    if (cat) {
+      const res = await fetch('/api/fusar/subcategories?category=' + encodeURIComponent(cat));
+      const subs = await res.json();
+      subs.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s; opt.textContent = s;
+        subSel.appendChild(opt);
+      });
+    }
+    loadImages();
+  }
+
+  function filters() {
+    return {
+      category:    document.getElementById('f-cat').value,
+      subcategory: document.getElementById('f-sub').value,
+      polar_mode:  document.getElementById('f-pol').value,
+      split:       document.getElementById('f-split').value,
+    };
+  }
+
+  async function loadImages(reset=true) {
+    if (reset) { offset = 0; document.getElementById('grid').innerHTML = ''; }
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('empty').style.display   = 'none';
+
+    const f = filters();
+    const params = new URLSearchParams({ ...f, limit: LIMIT, offset });
+    const res  = await fetch('/api/fusar/images?' + params);
+    const data = await res.json();
+
+    document.getElementById('loading').style.display = 'none';
+    total = data.total;
+    document.getElementById('count-label').textContent = `${total.toLocaleString()} images`;
+    document.getElementById('toolbar-info').textContent =
+      `Showing ${offset + data.images.length} of ${total.toLocaleString()}`;
+
+    if (data.images.length === 0 && reset) {
+      document.getElementById('empty').style.display = 'block';
+      return;
+    }
+
+    const grid = document.getElementById('grid');
+    data.images.forEach(img => {
+      const div = document.createElement('div');
+      div.className = 'chip';
+      div.dataset.id = img.id;
+      const lenStr = img.ship_length_m ? Math.round(img.ship_length_m) + 'm' : '';
+      div.innerHTML = `
+        <img src="/fusar-image/${img.id}" loading="lazy" alt="${img.subcategory || ''}">
+        <div class="chip-label">
+          <strong>${img.category || ''}</strong>
+          <span class="sub">${img.subcategory || ''}</span>
+          <span class="meta">${lenStr}${lenStr && img.polar_mode ? ' · ' : ''}${img.polar_mode || ''}</span>
+        </div>`;
+      div.onclick = () => showDetail(img.id, div);
+      grid.appendChild(div);
+    });
+    offset += data.images.length;
+  }
+
+  function loadMore() { loadImages(false); }
+
+  async function showDetail(id, el) {
+    document.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+    selectedId = id;
+
+    const res = await fetch(`/api/fusar/image/${id}`);
+    const d   = await res.json();
+    const panel = document.getElementById('detail-panel');
+    panel.classList.add('open');
+
+    document.getElementById('detail-img').src = `/fusar-image/${id}?t=` + Date.now();
+    document.getElementById('detail-cat-badge').innerHTML =
+      `<span class="cat-badge">${d.category || ''}</span>`;
+    document.getElementById('detail-sub-badge').innerHTML =
+      `<span class="sub-badge">${d.subcategory || ''}</span>`;
+
+    document.getElementById('d-cat').textContent    = d.category || '—';
+    document.getElementById('d-sub').textContent    = d.subcategory || '—';
+    document.getElementById('d-length').textContent = d.ship_length_m ? Math.round(d.ship_length_m) + ' m' : '—';
+    document.getElementById('d-width').textContent  = d.ship_width_m  ? Math.round(d.ship_width_m)  + ' m' : '—';
+    document.getElementById('d-pol').textContent    = d.polar_mode || '—';
+    document.getElementById('d-angle').textContent  = d.look_angle ? d.look_angle + '°' : '—';
+    const hres = d.height_res ? parseFloat(d.height_res).toFixed(2) : null;
+    const wres = d.width_res  ? parseFloat(d.width_res).toFixed(2)  : null;
+    document.getElementById('d-res').textContent    = (hres && wres) ? `${hres} × ${wres} m` : '—';
+    document.getElementById('d-split').textContent  = d.split || '—';
+    document.getElementById('d-mmsi').textContent   = d.mmsi || '—';
+    document.getElementById('d-imgid').textContent  = d.image_id || '—';
+  }
+
+  loadImages();
+</script>
+</body>
+</html>

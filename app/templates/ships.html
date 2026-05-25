@@ -51,8 +51,13 @@
   <header class="app-header">
     <span class="app-title">ShipRS Viewer</span>
     <div class="header-nav">
-      <a class="nav-btn" href="/">ATRNet Viewer</a>
-      <a class="nav-btn active" href="/ships">ShipRS Viewer</a>
+      <a class="nav-btn" href="/">ATRNet</a>
+      <a class="nav-btn active" href="/ships">ShipRS</a>
+      <a class="nav-btn" href="/opensar">OpenSAR</a>
+      <a class="nav-btn" href="/hrsid">HRSID</a>
+      <a class="nav-btn" href="/fusar">FUSAR</a>
+      <a class="nav-btn" href="/mstar">MSTAR</a>
+      <a class="nav-btn" href="/sar-ships">SAR Re-ID</a>
       <a class="nav-btn" href="/experiments">Experiments</a>
     </div>
   </header>
@@ -94,6 +99,11 @@
       <div class="grid-area">
         <div class="grid" id="grid"><div class="loading">Loading images...</div></div>
       </div>
+      <div id="pagination" style="display:flex;align-items:center;justify-content:center;gap:12px;padding:12px;border-top:1px solid #2a2d3a;flex-shrink:0;">
+        <button onclick="changePage(-1)" style="padding:6px 14px;background:#1a1d27;color:#aaa;border:1px solid #2a2d3a;border-radius:6px;cursor:pointer;">← Prev</button>
+        <span id="page-label" style="color:#888;font-size:0.85rem;"></span>
+        <button onclick="changePage(1)" style="padding:6px 14px;background:#1a1d27;color:#aaa;border:1px solid #2a2d3a;border-radius:6px;cursor:pointer;">Next →</button>
+      </div>
     </div>
 
     <div class="detail-panel" id="detail-panel">
@@ -111,6 +121,9 @@
 
 <script>
 let allFilters = {};
+let currentPage = 0;
+let totalImages = 0;
+const PAGE_SIZE = 200;
 
 async function loadFilters() {
   const r = await fetch('/api/shiprs/filters');
@@ -144,17 +157,28 @@ function onL2Change() {
   loadImages();
 }
 
-async function loadImages() {
+function changePage(delta) {
+  const maxPage = Math.ceil(totalImages / PAGE_SIZE) - 1;
+  currentPage = Math.max(0, Math.min(currentPage + delta, maxPage));
+  loadImages(false);
+}
+
+async function loadImages(resetPage = true) {
+  if (resetPage) currentPage = 0;
   const params = new URLSearchParams({
     level_1: document.getElementById('f-level1').value,
     level_2: document.getElementById('f-level2').value,
     level_3: document.getElementById('f-level3').value,
     split:   document.getElementById('f-split').value,
-    limit: 200,
+    limit:   PAGE_SIZE,
+    offset:  currentPage * PAGE_SIZE,
   });
   const resp = await fetch('/api/shiprs/images?' + params);
   const data = await resp.json();
-  document.getElementById('count-label').textContent = `${data.total.toLocaleString()} instances`;
+  totalImages = data.total;
+  const totalPages = Math.ceil(totalImages / PAGE_SIZE);
+  document.getElementById('count-label').textContent = `${totalImages.toLocaleString()} instances`;
+  document.getElementById('page-label').textContent = `Page ${currentPage + 1} of ${totalPages}`;
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
   data.images.forEach(m => {

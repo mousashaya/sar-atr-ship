@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HRSID Viewer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f1117; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+    .app-header { background: #1a1d27; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #2a2d3a; flex-shrink: 0; }
+    .app-title { font-size: 1.1rem; font-weight: 600; color: #7eb8f7; }
+    .header-nav { display: flex; gap: 8px; }
+    .nav-btn { padding: 6px 14px; border-radius: 6px; text-decoration: none; color: #aaa; font-size: 0.85rem; border: 1px solid #2a2d3a; }
+    .nav-btn:hover { background: #2a2d3a; color: #fff; }
+    .nav-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .app-body { display: flex; flex: 1; overflow: hidden; }
+    .sidebar { width: 220px; background: #13161f; padding: 16px; overflow-y: auto; border-right: 1px solid #2a2d3a; flex-shrink: 0; }
+    .sidebar label { display: block; font-size: 0.75rem; color: #888; margin-bottom: 4px; margin-top: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .sidebar select { width: 100%; background: #1a1d27; color: #e0e0e0; border: 1px solid #2a2d3a; border-radius: 6px; padding: 6px 8px; font-size: 0.85rem; }
+    .sidebar .count { font-size: 0.75rem; color: #666; margin-top: 8px; }
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .toolbar { padding: 10px 16px; background: #13161f; border-bottom: 1px solid #2a2d3a; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+    .toolbar button { padding: 5px 12px; border-radius: 5px; border: 1px solid #2a2d3a; background: #1a1d27; color: #ccc; font-size: 0.8rem; cursor: pointer; }
+    .toolbar button:hover { background: #2a2d3a; }
+    .grid-area { flex: 1; overflow-y: auto; padding: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+    .chip { background: #1a1d27; border-radius: 8px; overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s; }
+    .chip:hover { border-color: #2563eb; }
+    .chip.selected { border-color: #f59e0b; }
+    .chip img { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; background: #080a0f; }
+    .chip-label { padding: 6px 8px; font-size: 0.72rem; color: #bbb; line-height: 1.3; }
+    .chip-label strong { color: #e0e0e0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chip-label .scene-tag { font-size: 0.68rem; color: #6ee7b7; }
+    .detail-panel { width: 320px; background: #13161f; border-left: 1px solid #2a2d3a; padding: 16px; overflow-y: auto; flex-shrink: 0; display: none; }
+    .detail-panel.open { display: block; }
+    .detail-panel img { width: 100%; border-radius: 8px; margin-bottom: 12px; image-rendering: pixelated; background: #080a0f; }
+    .detail-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #1a1d27; font-size: 0.8rem; }
+    .detail-row .lbl { color: #888; flex-shrink: 0; margin-right: 8px; }
+    .detail-row .val { color: #e0e0e0; text-align: right; word-break: break-word; }
+    .detail-section { font-size: 0.7rem; color: #555; text-transform: uppercase; letter-spacing: 0.06em; margin: 12px 0 4px; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: 600; margin-bottom: 10px; }
+    .inshore  { background: #1e3a5f; color: #7eb8f7; }
+    .offshore { background: #1e4d2e; color: #6ee7b7; }
+    .loading { text-align: center; color: #555; padding: 40px; }
+    .empty { text-align: center; color: #444; padding: 60px 20px; font-size: 0.9rem; }
+    .size-hint { font-size: 0.68rem; color: #555; }
+  </style>
+</head>
+<body>
+
+  <header class="app-header">
+    <span class="app-title">HRSID — High-Res SAR Ship Chips (0.5–3 m)</span>
+    <div class="header-nav">
+      <a class="nav-btn" href="/">ATRNet</a>
+      <a class="nav-btn" href="/ships">ShipRS</a>
+      <a class="nav-btn" href="/opensar">OpenSAR</a>
+      <a class="nav-btn active" href="/hrsid">HRSID</a>
+      <a class="nav-btn" href="/fusar">FUSAR</a>
+      <a class="nav-btn" href="/mstar">MSTAR</a>
+      <a class="nav-btn" href="/sar-ships">SAR Re-ID</a>
+      <a class="nav-btn" href="/experiments">Experiments</a>
+    </div>
+  </header>
+
+  <div class="app-body">
+    <div class="sidebar">
+      <div>
+        <label>Scene</label>
+        <select id="f-scene" onchange="loadChips()">
+          <option value="">All scenes</option>
+          {% for s in scene %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Split</label>
+        <select id="f-split" onchange="loadChips()">
+          <option value="">All</option>
+          {% for s in split %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Min ship size</label>
+        <select id="f-area" onchange="loadChips()">
+          <option value="0">Any size</option>
+          <option value="200">Medium (>200 px²)</option>
+          <option value="1000">Large (>1000 px²)</option>
+          <option value="5000">Very large (>5000 px²)</option>
+        </select>
+      </div>
+      <div class="count" id="count-label">Loading...</div>
+    </div>
+
+    <div class="main">
+      <div class="toolbar">
+        <button onclick="loadMore()">Load more</button>
+        <span id="toolbar-info" style="font-size:0.8rem;color:#555;margin-left:8px;"></span>
+      </div>
+      <div class="grid-area">
+        <div class="grid" id="grid"></div>
+        <div class="loading" id="loading" style="display:none">Loading...</div>
+        <div class="empty" id="empty" style="display:none">No chips found</div>
+      </div>
+    </div>
+
+    <div class="detail-panel" id="detail-panel">
+      <img id="detail-img" src="" alt="">
+      <div id="detail-badge"></div>
+      <div class="detail-section">Chip Info</div>
+      <div class="detail-row"><span class="lbl">Scene</span><span class="val" id="d-scene"></span></div>
+      <div class="detail-row"><span class="lbl">Split</span><span class="val" id="d-split"></span></div>
+      <div class="detail-row"><span class="lbl">Chip size</span><span class="val" id="d-chip-size"></span></div>
+      <div class="detail-section">Bounding Box</div>
+      <div class="detail-row"><span class="lbl">BBox (px)</span><span class="val" id="d-bbox"></span></div>
+      <div class="detail-row"><span class="lbl">Area (px²)</span><span class="val" id="d-area"></span></div>
+      <div class="detail-section">Source</div>
+      <div class="detail-row"><span class="lbl">Chip ID</span><span class="val" id="d-chip-id" style="font-size:0.7rem;"></span></div>
+      <div class="detail-row"><span class="lbl">Source file</span><span class="val" id="d-source" style="font-size:0.68rem;"></span></div>
+    </div>
+  </div>
+
+<script>
+  let offset = 0;
+  const LIMIT = 200;
+  let total = 0;
+  let selectedId = null;
+
+  function filters() {
+    return {
+      scene:    document.getElementById('f-scene').value,
+      split:    document.getElementById('f-split').value,
+      min_area: document.getElementById('f-area').value,
+    };
+  }
+
+  async function loadChips(reset=true) {
+    if (reset) { offset = 0; document.getElementById('grid').innerHTML = ''; }
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('empty').style.display   = 'none';
+
+    const f = filters();
+    const params = new URLSearchParams({ ...f, limit: LIMIT, offset });
+    const res  = await fetch('/api/hrsid/chips?' + params);
+    const data = await res.json();
+
+    document.getElementById('loading').style.display = 'none';
+    total = data.total;
+    document.getElementById('count-label').textContent = `${total.toLocaleString()} chips`;
+    document.getElementById('toolbar-info').textContent =
+      `Showing ${offset + data.chips.length} of ${total.toLocaleString()}`;
+
+    if (data.chips.length === 0 && reset) {
+      document.getElementById('empty').style.display = 'block';
+      return;
+    }
+
+    const grid = document.getElementById('grid');
+    data.chips.forEach(chip => {
+      const div = document.createElement('div');
+      div.className = 'chip';
+      div.dataset.id = chip.id;
+      const sizeLabel = chip.bbox_w && chip.bbox_h
+        ? `${chip.bbox_w}×${chip.bbox_h} px`
+        : '';
+      div.innerHTML = `
+        <img src="/hrsid-image/${chip.id}" loading="lazy" alt="">
+        <div class="chip-label">
+          <strong>${chip.scene || 'ship'}</strong>
+          <span class="scene-tag">${chip.split || ''}</span>
+          ${sizeLabel ? `<span class="size-hint">${sizeLabel}</span>` : ''}
+        </div>`;
+      div.onclick = () => showDetail(chip.id, div);
+      grid.appendChild(div);
+    });
+    offset += data.chips.length;
+  }
+
+  function loadMore() { loadChips(false); }
+
+  async function showDetail(id, el) {
+    document.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+    selectedId = id;
+
+    const res = await fetch(`/api/hrsid/chip/${id}`);
+    const d   = await res.json();
+    const panel = document.getElementById('detail-panel');
+    panel.classList.add('open');
+
+    document.getElementById('detail-img').src = `/hrsid-image/${id}?t=` + Date.now();
+
+    const scene = d.scene || '';
+    document.getElementById('detail-badge').innerHTML =
+      `<span class="badge ${scene}">${scene || 'ship'}</span>`;
+
+    document.getElementById('d-scene').textContent     = d.scene || '—';
+    document.getElementById('d-split').textContent     = d.split || '—';
+    document.getElementById('d-chip-size').textContent = d.chip_width && d.chip_height
+      ? `${d.chip_width} × ${d.chip_height} px` : '—';
+    document.getElementById('d-bbox').textContent      = d.bbox_w && d.bbox_h
+      ? `${d.bbox_w} × ${d.bbox_h}` : '—';
+    document.getElementById('d-area').textContent      = d.area ? Math.round(d.area).toLocaleString() : '—';
+    document.getElementById('d-chip-id').textContent   = d.chip_id || '—';
+    document.getElementById('d-source').textContent    = d.source_filename || '—';
+  }
+
+  loadChips();
+</script>
+</body>
+</html>
