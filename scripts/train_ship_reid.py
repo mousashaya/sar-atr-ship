@@ -37,20 +37,18 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
-CHIPS_DIRS   = [
+GRD_DIRS     = [
     Path('/Volumes/Machine Learning/sar_ship_chips'),
     Path('/Volumes/Machine Learning/sar_ship_chips_gulf'),
-    Path('/Volumes/Machine Learning/sar_ship_chips_slc_gulf'),
 ]
-MAE_BACKBONE = Path(__file__).parent.parent / 'models' / 'saved' / 'sar_mae_v1' / 'backbone.pt'
-MODELS_DIR   = Path(__file__).parent.parent / 'models' / 'saved' / 'ship_reid_v1'
-LOGS_DIR     = Path(__file__).parent.parent / 'logs' / 'ship_reid'
+SLC_DIRS     = [Path('/Volumes/Machine Learning/sar_ship_chips_slc_gulf')]
+MAE_BACKBONE = Path('/Volumes/Machine Learning/sar_mae_slc_v1/backbone_best.pt')
+LABELS_PATH  = Path('data/resolved_labels.json')
 SEED         = 42
 MIN_PASSES   = 2
 MIN_LENGTH   = 100      # metres
 P            = 16       # ships per batch
 K            = 4        # chips per ship per batch
-EMBED_DIM    = 384      # DINOv2 ViT-S/14 output
 PROJ_DIM     = 128      # projection head output
 
 GMAIL_USER     = "mshaya01.ml@gmail.com"
@@ -119,34 +117,37 @@ def center_crop(arr, size=CROP_SIZE):
     return arr[r0:r0+size, c0:c0+size]
 
 
-def chip_to_tensor(chip_vv, chip_vh, augment=False):
+def chip_to_tensor_dinov2(chip_vv, chip_vh, augment=False):
     vv = center_crop(chip_vv.astype(np.float32))
     vh = center_crop(chip_vh.astype(np.float32))
-
     vv_db = 10 * np.log10(vv + 1.0)
     vh_db = 10 * np.log10(vh + 1.0)
-
     vv_db = subtract_background(vv_db)
     vh_db = subtract_background(vh_db)
-
     def norm(x):
         valid = x[np.isfinite(x)]
-        if valid.size == 0:
-            return np.zeros_like(x)
+        if valid.size == 0: return np.zeros_like(x)
         p2, p98 = np.percentile(valid, [2, 98])
         return np.clip((x - p2) / max(p98 - p2, 1e-6), 0, 1).astype(np.float32)
-
     rgb = np.stack([norm(vv_db), norm(vh_db), norm(vv_db - vh_db)], axis=2)
     img = Image.fromarray((rgb * 255).astype(np.uint8))
     return (_aug if augment else _preprocess)(img)
 
 
+def chip_to_tensor_croma(chip_vv, chip_vh, augment=False):
+    sys.path.insert(0, 'models')
+    from croma import chip_to_tensor as croma_chip
+    vv = center_crop(chip_vv.astype(np.float32))
+    vh = center_crop(chip_vh.astype(np.float32)) if chip_vh is not None else vv
+    return croma_chip(vv, vh, augment=augment)
+
+
 # ── Dataset ────────────────────────────────────────────────────────────────────
 
-def scan_chips():
+def scan_chips(chips_dirs, tanker_mmsis=None):
     """Return list of (npz_path, mmsi, length_m) for all valid chips."""
     records = []
-    for d in CHIPS_DIRS:
+    for d in chips_dirs:
         if not d.exists():
             continue
         for npz in sorted(d.glob('**/*.npz')):
@@ -155,6 +156,8 @@ def scan_chips():
             try:
                 f = np.load(npz, allow_pickle=True)
                 mmsi   = int(f['mmsi'])
+                if tanker_mmsis is not None and mmsi not in tanker_mmsis:
+                    continue
                 length = float(f['length_m']) if 'length_m' in f else 0.0
                 records.append((npz, mmsi, length))
             except Exception:
@@ -164,7 +167,6 @@ def scan_chips():
 
 def build_splits(records):
     """Split MMSIs 70/15/15 after filtering by MIN_PASSES and MIN_LENGTH."""
-    # count passes per MMSI, filter by length
     by_mmsi = defaultdict(list)
     for path, mmsi, length in records:
         if length >= MIN_LENGTH:
@@ -192,9 +194,10 @@ def build_splits(records):
 
 
 class ChipDataset(Dataset):
-    def __init__(self, records, augment=False):
-        self.records = records   # [(path, mmsi), ...]
-        self.augment = augment
+    def __init__(self, records, augment=False, tensor_fn=None):
+        self.records   = records
+        self.augment   = augment
+        self.tensor_fn = tensor_fn or chip_to_tensor_dinov2
 
     def __len__(self):
         return len(self.records)
@@ -202,7 +205,8 @@ class ChipDataset(Dataset):
     def __getitem__(self, idx):
         path, mmsi = self.records[idx]
         f = np.load(path, allow_pickle=True)
-        t = chip_to_tensor(f['chip_vv'], f['chip_vh'], augment=self.augment)
+        chip_vh = f['chip_vh'] if 'chip_vh' in f else None
+        t = self.tensor_fn(f['chip_vv'], chip_vh, augment=self.augment)
         return t, mmsi
 
 
@@ -227,37 +231,51 @@ class ArcFaceHead(nn.Module):
 
 
 class ReIDModel(nn.Module):
-    def __init__(self, unfreeze_blocks=0, use_mae_backbone=True,
+    def __init__(self, backbone_name='dinov2', unfreeze_blocks=6,
                  num_classes=None, arc_scale=64.0, arc_margin=0.5):
         super().__init__()
-        self.backbone = torch.hub.load(
-            'facebookresearch/dinov2', 'dinov2_vits14', pretrained=True, verbose=False
-        )
+        self.backbone_name = backbone_name
 
-        if use_mae_backbone and MAE_BACKBONE.exists():
-            state = torch.load(MAE_BACKBONE, map_location='cpu')
-            self.backbone.load_state_dict(state)
-            print(f"  Loaded SAR MAE backbone from {MAE_BACKBONE}")
-        else:
-            print("  Using vanilla DINOv2 backbone (no SAR MAE)")
-
-        for p in self.backbone.parameters():
-            p.requires_grad = False
-
-        if unfreeze_blocks > 0:
-            blocks = list(self.backbone.blocks)
+        if backbone_name == 'croma':
+            sys.path.insert(0, 'models')
+            from croma import build_model as build_croma, FEATURE_DIM
+            croma_model = build_croma(num_classes=1)  # num_classes unused, we strip head
+            self.backbone = croma_model.encoder
+            embed_dim = FEATURE_DIM  # 768
+            for p in self.backbone.parameters():
+                p.requires_grad = False
+            # unfreeze last N transformer blocks in CROMA's ViT
+            blocks = list(self.backbone.s1_encoder.transformer.layers)
             for block in blocks[-unfreeze_blocks:]:
                 for p in block.parameters():
                     p.requires_grad = True
+            self._forward_backbone = lambda x: self.backbone(SAR_images=x)['SAR_GAP']
+        else:
+            self.backbone = torch.hub.load(
+                'facebookresearch/dinov2', 'dinov2_vits14', pretrained=True, verbose=False
+            )
+            if MAE_BACKBONE.exists():
+                state = torch.load(MAE_BACKBONE, map_location='cpu')
+                self.backbone.load_state_dict(state)
+                print(f"  Loaded SAR MAE backbone from {MAE_BACKBONE}")
+            else:
+                print("  Using vanilla DINOv2 backbone")
+            embed_dim = 384
+            for p in self.backbone.parameters():
+                p.requires_grad = False
+            for block in list(self.backbone.blocks)[-unfreeze_blocks:]:
+                for p in block.parameters():
+                    p.requires_grad = True
+            self._forward_backbone = lambda x: self.backbone(x)
 
         self.proj = nn.Sequential(
-            nn.Linear(EMBED_DIM, PROJ_DIM, bias=False),
+            nn.Linear(embed_dim, PROJ_DIM, bias=False),
             nn.BatchNorm1d(PROJ_DIM),
         )
         self.arcface = ArcFaceHead(PROJ_DIM, num_classes, s=arc_scale, m=arc_margin) if num_classes else None
 
     def forward(self, x, labels=None):
-        feats = self.backbone(x)
+        feats = self._forward_backbone(x)
         feats = self.proj(feats)
         feats = F.normalize(feats, dim=1)
         if labels is not None and self.arcface is not None:
@@ -268,9 +286,9 @@ class ReIDModel(nn.Module):
 # ── Evaluation ─────────────────────────────────────────────────────────────────
 
 @torch.no_grad()
-def extract_embeddings(model, records, device, batch_size=64):
+def extract_embeddings(model, records, device, batch_size=64, tensor_fn=None):
     model.eval()
-    ds = ChipDataset(records, augment=False)
+    ds = ChipDataset(records, augment=False, tensor_fn=tensor_fn)
     loader = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0)
     embs, mmsis = [], []
     for imgs, labels in loader:
@@ -322,46 +340,51 @@ def compute_metrics(embs, mmsis):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs',         type=int,   default=30)
-    parser.add_argument('--lr',             type=float, default=1e-4)
-    parser.add_argument('--unfreeze',       type=int,   default=6,
-                        help='Unfreeze last N ViT blocks')
-    parser.add_argument('--arc-scale',      type=float, default=64.0)
-    parser.add_argument('--arc-margin',     type=float, default=0.5)
-    parser.add_argument('--backbone-lr-scale', type=float, default=0.1,
-                        help='Backbone LR = lr * this scale (default 0.1 = 10x lower than head)')
-    parser.add_argument('--vanilla-dinov2', action='store_true',
-                        help='Use vanilla DINOv2 instead of SAR MAE backbone')
-    parser.add_argument('--slc-only', action='store_true',
-                        help='Train on SLC chips only (sar_ship_chips_slc_gulf)')
-    parser.add_argument('--grd-only', action='store_true',
-                        help='Train on GRD chips only (sar_ship_chips + sar_ship_chips_gulf)')
+    parser.add_argument('--epochs',            type=int,   default=30)
+    parser.add_argument('--lr',                type=float, default=1e-4)
+    parser.add_argument('--unfreeze',          type=int,   default=6)
+    parser.add_argument('--arc-scale',         type=float, default=64.0)
+    parser.add_argument('--arc-margin',        type=float, default=0.5)
+    parser.add_argument('--backbone-lr-scale', type=float, default=0.1)
+    parser.add_argument('--backbone',          default='dinov2', choices=['dinov2', 'croma'])
+    parser.add_argument('--tanker-only',       action='store_true',
+                        help='Restrict to HIGH-confidence Tankers only')
+    parser.add_argument('--slc',               action='store_true',
+                        help='Use SLC chips instead of GRD')
     args = parser.parse_args()
 
     random.seed(SEED)
     np.random.seed(SEED)
     torch.manual_seed(SEED)
 
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
     device = get_device()
     print(f"Device: {device}")
 
-    # ── Data ──
-    global CHIPS_DIRS
-    if args.slc_only:
-        CHIPS_DIRS = [Path('/Volumes/Machine Learning/sar_ship_chips_slc_gulf')]
-        print("Chip source: SLC only")
-    elif args.grd_only:
-        CHIPS_DIRS = [Path('/Volumes/Machine Learning/sar_ship_chips'),
-                      Path('/Volumes/Machine Learning/sar_ship_chips_gulf')]
-        print("Chip source: GRD only")
-    else:
-        print("Chip source: GRD + SLC combined")
+    chip_to_tensor = chip_to_tensor_croma if args.backbone == 'croma' else chip_to_tensor_dinov2
 
+    run_tag = f"reid_{args.backbone}_{'slc' if args.slc else 'grd'}{'_tanker' if args.tanker_only else ''}"
+    models_dir = Path(__file__).parent.parent / 'models' / 'saved' / run_tag
+    logs_dir   = Path(__file__).parent.parent / 'logs' / run_tag
+    models_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Tanker filter ──
+    tanker_mmsis = None
+    if args.tanker_only:
+        with open(LABELS_PATH) as f:
+            resolved = json.load(f)
+        tanker_mmsis = {
+            int(mmsi) for mmsi, v in resolved.items()
+            if v['label'] == 'Tanker' and v['confidence'] == 'HIGH'
+        }
+        print(f"Tanker-only filter: {len(tanker_mmsis)} HIGH-confidence Tanker MMSIs")
+
+    # ── Data ──
+    chips_dirs = SLC_DIRS if args.slc else GRD_DIRS
+    print(f"Chip source: {'SLC' if args.slc else 'GRD'}")
     print("Scanning chips...")
-    records = scan_chips()
+    records = scan_chips(chips_dirs, tanker_mmsis=tanker_mmsis)
     train_recs, val_recs, test_recs, qualified = build_splits(records)
 
     n_train_ids = len({m for _, m in train_recs})
@@ -378,19 +401,15 @@ def main():
     n_train_ships = len(train_mmsis)
 
     loader = DataLoader(
-        ChipDataset(train_recs, augment=True),
-        batch_size=64,
-        shuffle=True,
-        num_workers=0,
-        drop_last=True,
+        ChipDataset(train_recs, augment=True, tensor_fn=chip_to_tensor),
+        batch_size=64, shuffle=True, num_workers=0, drop_last=True,
     )
 
     # ── Model ──
-    use_mae = not args.vanilla_dinov2
-    print(f"Loading backbone (SAR MAE={'yes' if use_mae else 'no'}, unfreeze_blocks={args.unfreeze})...")
+    print(f"Loading backbone ({args.backbone}, unfreeze_blocks={args.unfreeze})...")
     model = ReIDModel(
+        backbone_name=args.backbone,
         unfreeze_blocks=args.unfreeze,
-        use_mae_backbone=use_mae,
         num_classes=n_train_ships,
         arc_scale=args.arc_scale,
         arc_margin=args.arc_margin,
@@ -445,7 +464,7 @@ def main():
         train_loss = np.mean(losses) if losses else 0.0
 
         # Evaluate on val set
-        val_embs, val_mmsis = extract_embeddings(model, val_recs, device)
+        val_embs, val_mmsis = extract_embeddings(model, val_recs, device, tensor_fn=chip_to_tensor)
         rank1, rank5, mAP   = compute_metrics(val_embs, val_mmsis)
         elapsed = time.time() - t0
 
@@ -460,13 +479,13 @@ def main():
         if rank1 > best_rank1:
             best_rank1 = rank1
             best_epoch = epoch
-            torch.save(model.state_dict(), MODELS_DIR / 'best.pt')
+            torch.save(model.state_dict(), models_dir / 'best.pt')
             print(f"    *** New best rank-1: {rank1*100:.1f}% ***")
 
     # ── Final test evaluation ──
     print("\nLoading best model for test evaluation...")
-    model.load_state_dict(torch.load(MODELS_DIR / 'best.pt', map_location=device))
-    test_embs, test_mmsis = extract_embeddings(model, test_recs, device)
+    model.load_state_dict(torch.load(models_dir / 'best.pt', map_location=device))
+    test_embs, test_mmsis = extract_embeddings(model, test_recs, device, tensor_fn=chip_to_tensor)
     test_r1, test_r5, test_mAP = compute_metrics(test_embs, test_mmsis)
 
     print(f"\n{'='*60}")
@@ -488,10 +507,10 @@ def main():
         'n_test_ships': n_test_ids,
         'history': history,
     }
-    with open(LOGS_DIR / 'results.json', 'w') as f:
+    with open(logs_dir / 'results.json', 'w') as f:
         json.dump(results, f, indent=2)
-    torch.save(model.state_dict(), MODELS_DIR / 'final.pt')
-    print(f"Results saved to {LOGS_DIR}/results.json")
+    torch.save(model.state_dict(), models_dir / 'final.pt')
+    print(f"Results saved to {logs_dir}/results.json")
 
     send_email(
         f"Ship Re-ID done — Rank-1 {test_r1*100:.1f}%  mAP {test_mAP*100:.1f}%",

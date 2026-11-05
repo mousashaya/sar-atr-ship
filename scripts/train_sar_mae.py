@@ -38,9 +38,10 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 
-SCENE_DIR  = Path('/Volumes/Machine Learning/sentinel1_gulf')
-MODELS_DIR = Path(__file__).parent.parent / 'models' / 'saved' / 'sar_mae_v1'
-LOGS_DIR   = Path(__file__).parent.parent / 'logs' / 'sar_mae'
+SCENE_DIR    = Path('/Volumes/Machine Learning/sentinel1_slc_gulf')
+PATCHES_FILE = Path('/Users/mousashaya/MLData/sar_patches_slc_gulf/patches.npy')
+MODELS_DIR   = Path('/Volumes/Machine Learning/sar_mae_slc_v1')
+LOGS_DIR     = Path(__file__).parent.parent / 'logs' / 'sar_mae_slc'
 SEED       = 42
 PATCH_SIZE = 224   # input to DINOv2
 TOKEN_SIZE = 14    # DINOv2 ViT-S/14 patch size
@@ -100,72 +101,40 @@ def raw_to_tensor(vv_raw, vh_raw):
 # ── Dataset: streams random patches from SAFE TIFFs ───────────────────────────
 
 def find_safe_tiffs(scene_dir):
-    """Return list of (vv_path, vh_path) for each SAFE scene."""
+    """Return list of (vv_path, vh_path) for each IW subswath across all SAFE scenes.
+    SLC scenes have 3 subswaths (iw1/iw2/iw3) — each treated as independent patch source.
+    """
     pairs = []
     for safe in sorted(scene_dir.glob('*.SAFE')):
         meas = safe / 'measurement'
-        vv_files = sorted(meas.glob('*-vv-*.tiff'))
-        vh_files = sorted(meas.glob('*-vh-*.tiff'))
-        if vv_files and vh_files:
-            pairs.append((vv_files[0], vh_files[0]))
+        for sw in ['iw1', 'iw2', 'iw3']:
+            vv_files = sorted(meas.glob(f'*-{sw}-slc-vv-*.tiff'))
+            vh_files = sorted(meas.glob(f'*-{sw}-slc-vh-*.tiff'))
+            if vv_files and vh_files:
+                pairs.append((vv_files[0], vh_files[0]))
     return pairs
 
 
 class SARPatchDataset(Dataset):
-    def __init__(self, tiff_pairs, patches_per_scene, augment=True):
-        self.patches  = []   # (vv_path, vh_path, row, col)
-        self.augment  = augment
-
-        print(f"  Sampling patches from {len(tiff_pairs)} scenes...")
-        for vv_path, vh_path in tiff_pairs:
-            try:
-                with rasterio.open(vv_path) as src:
-                    h, w = src.height, src.width
-
-                # only sample from valid interior (avoid black border edges)
-                margin = PATCH_SIZE
-                if h < 2 * margin + PATCH_SIZE or w < 2 * margin + PATCH_SIZE:
-                    continue
-
-                rows = np.random.randint(margin, h - margin - PATCH_SIZE,
-                                         size=patches_per_scene * 3)
-                cols = np.random.randint(margin, w - margin - PATCH_SIZE,
-                                         size=patches_per_scene * 3)
-
-                kept = 0
-                for r, c in zip(rows, cols):
-                    self.patches.append((vv_path, vh_path, int(r), int(c)))
-                    kept += 1
-                    if kept >= patches_per_scene:
-                        break
-            except Exception as e:
-                print(f"    Warning: {vv_path.parent.parent.name}: {e}")
-                continue
-
-        print(f"  Total patches: {len(self.patches):,}")
+    """Loads pre-extracted uint8 patches from internal SSD — fast sequential reads."""
+    def __init__(self, patches_file, augment=True):
+        self.augment = augment
+        print(f"  Loading patches from {patches_file} ...")
+        self.data = np.load(patches_file, mmap_mode='r')
+        print(f"  Total patches: {len(self.data):,}  shape: {self.data.shape}")
 
     def __len__(self):
-        return len(self.patches)
+        return len(self.data)
 
     def __getitem__(self, idx):
-        vv_path, vh_path, row, col = self.patches[idx]
-        window = rasterio.windows.Window(col, row, PATCH_SIZE, PATCH_SIZE)
-        try:
-            with rasterio.open(vv_path) as src:
-                vv = src.read(1, window=window).astype(np.float32)
-            with rasterio.open(vh_path) as src:
-                vh = src.read(1, window=window).astype(np.float32)
-        except Exception:
-            return torch.zeros(3, PATCH_SIZE, PATCH_SIZE)
-
-        t = raw_to_tensor(vv, vh)
+        patch = self.data[idx].astype(np.float32) / 255.0  # uint8 → [0,1]
+        t = _normalize(torch.from_numpy(patch))
 
         if self.augment:
             if random.random() > 0.5:
                 t = torch.flip(t, dims=[2])
             if random.random() > 0.5:
                 t = torch.flip(t, dims=[1])
-            # Random 90° rotation — ships appear at all headings in SAR
             k = random.randint(0, 3)
             if k > 0:
                 t = torch.rot90(t, k=k, dims=[1, 2])
@@ -296,12 +265,18 @@ class SARMAE(nn.Module):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs',            type=int,   default=10)
-    parser.add_argument('--patches-per-scene', type=int,   default=300)
-    parser.add_argument('--batch-size',        type=int,   default=32)
+    parser.add_argument('--epochs',            type=int,   default=50)
+    parser.add_argument('--patches-per-scene', type=int,   default=500)
+    parser.add_argument('--patience',          type=int,   default=3)
+    parser.add_argument('--min-delta',         type=float, default=0.001)
+    parser.add_argument('--batch-size',        type=int,   default=16)
     parser.add_argument('--lr',                type=float, default=1e-4)
     parser.add_argument('--unfreeze-last',     type=int,   default=12,
                         help='Number of ViT blocks to unfreeze (default: all 12)')
+    parser.add_argument('--resume-backbone',   type=str,   default=None,
+                        help='Backbone filename in MODELS_DIR to warm-start from (e.g. backbone_epoch03.pt)')
+    parser.add_argument('--start-epoch',       type=int,   default=None,
+                        help='Epoch number to start from when using --resume-backbone')
     args = parser.parse_args()
 
     random.seed(SEED)
@@ -315,14 +290,15 @@ def main():
     print(f"Device: {device}")
 
     # ── Data ──
-    tiff_pairs = find_safe_tiffs(SCENE_DIR)
-    print(f"Found {len(tiff_pairs)} SAFE scenes")
-    print(f"Coverage: Aug–Dec 2024  (Jan–May 2024 not yet downloaded)")
+    if not PATCHES_FILE.exists():
+        print(f"ERROR: Patches file not found: {PATCHES_FILE}")
+        print(f"Run first: venv/bin/python scripts/extract_slc_patches.py")
+        return
 
-    dataset = SARPatchDataset(tiff_pairs, args.patches_per_scene)
+    dataset = SARPatchDataset(PATCHES_FILE)
     loader  = DataLoader(dataset, batch_size=args.batch_size,
                          shuffle=True, num_workers=0, pin_memory=False)
-    print(f"Batches per epoch: {len(loader)}")
+    print(f"Batches per epoch: {len(loader):,}")
 
     # ── Model ──
     print(f"Building SAR MAE (unfreeze_last={args.unfreeze_last})...")
@@ -335,24 +311,58 @@ def main():
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.lr, weight_decay=0.05
     )
+    # last_epoch=-1 is default (fresh); set to start_epoch-1 when warm-starting
+    # so the cosine schedule is at the right phase without calling step() early
+    sched_last = (args.start_epoch - 2) if (args.resume_backbone and args.start_epoch) else -1
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs
+        optimizer, T_max=args.epochs, last_epoch=sched_last
     )
+
+    # ── Resume from checkpoint if available ───────────────────────────────────
+    start_epoch = 1
+    history     = []
+    checkpoint  = MODELS_DIR / 'checkpoint_latest.pt'
+    if checkpoint.exists():
+        ckpt = torch.load(checkpoint, map_location=device)
+        model.load_state_dict(ckpt['model'])
+        optimizer.load_state_dict(ckpt['optimizer'])
+        scheduler.load_state_dict(ckpt['scheduler'])
+        start_epoch = ckpt['epoch'] + 1
+        history     = ckpt['history']
+        print(f"  Resumed from epoch {ckpt['epoch']}  (loss={ckpt['loss']:.4f})")
+    elif args.resume_backbone:
+        # Warm-start from a backbone-only checkpoint (no optimizer state)
+        backbone_path = MODELS_DIR / args.resume_backbone
+        if not backbone_path.exists():
+            print(f"ERROR: --resume-backbone file not found: {backbone_path}")
+            return
+        state = torch.load(backbone_path, map_location=device)
+        model.backbone.load_state_dict(state)
+        if args.start_epoch is not None:
+            start_epoch = args.start_epoch
+            # scheduler already initialised at the right last_epoch above
+        print(f"  Warm-started backbone from {args.resume_backbone}, "
+              f"resuming at epoch {start_epoch} (fresh optimizer)")
 
     print(f"\n{'='*60}")
     print(f"  SAR MAE — Stage 1 Domain Adaptation")
-    print(f"  Scenes: {len(tiff_pairs)}  Patches: {len(dataset):,}")
+    print(f"  Patches: {len(dataset):,}  (pre-extracted, internal SSD)")
     print(f"  Epochs: {args.epochs}  Batch: {args.batch_size}")
     print(f"  Mask ratio: {MASK_RATIO:.0%}  LR: {args.lr}")
     print(f"{'='*60}\n")
 
-    history = []
-    for epoch in range(1, args.epochs + 1):
+    best_loss      = min((h['loss'] for h in history), default=float('inf'))
+    patience_count = 0
+    # After a warm-start (backbone-only resume), skip patience for 2 epochs
+    # while the fresh optimizer rebuilds momentum
+    warmup_epochs  = (start_epoch + 1) if args.resume_backbone else 0
+
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         t0     = time.time()
         losses = []
 
-        for batch in loader:
+        for step, batch in enumerate(loader, 1):
             batch = batch.to(device)
             loss  = model(batch)
             optimizer.zero_grad()
@@ -360,6 +370,11 @@ def main():
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             losses.append(loss.item())
+            if step % 1000 == 0:
+                pct = 100 * step / len(loader)
+                ts  = time.strftime('%Y-%m-%d %H:%M:%S')
+                print(f"    {ts}  [{step}/{len(loader)}  {pct:.0f}%  "
+                      f"loss={np.mean(losses):.4f}]", flush=True)
 
         scheduler.step()
         avg_loss = np.mean(losses)
@@ -368,9 +383,35 @@ def main():
               f"loss={avg_loss:.4f}  ({elapsed:.0f}s)", flush=True)
         history.append({'epoch': epoch, 'loss': avg_loss})
 
-        # Save checkpoint each epoch
+        # Save resumable checkpoint + backbone weights each epoch
+        torch.save({
+            'epoch':     epoch,
+            'loss':      avg_loss,
+            'model':     model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'scheduler': scheduler.state_dict(),
+            'history':   history,
+        }, MODELS_DIR / 'checkpoint_latest.pt')
         torch.save(model.backbone.state_dict(),
                    MODELS_DIR / f'backbone_epoch{epoch:02d}.pt')
+
+        # Early stopping (skip patience check during warm-start settling period)
+        if epoch <= warmup_epochs:
+            print(f"  Warm-start grace period — patience paused (epoch {epoch}/{warmup_epochs})",
+                  flush=True)
+            if avg_loss < best_loss:
+                best_loss = avg_loss  # still track best, just don't penalise
+        elif avg_loss < best_loss - args.min_delta:
+            best_loss      = avg_loss
+            patience_count = 0
+            torch.save(model.backbone.state_dict(), MODELS_DIR / 'backbone_best.pt')
+        else:
+            patience_count += 1
+            print(f"  No improvement for {patience_count}/{args.patience} epochs "
+                  f"(best={best_loss:.4f})", flush=True)
+            if patience_count >= args.patience:
+                print(f"  Early stopping at epoch {epoch} — best loss {best_loss:.4f}")
+                break
 
     # Save final backbone
     torch.save(model.backbone.state_dict(), MODELS_DIR / 'backbone.pt')
@@ -379,17 +420,16 @@ def main():
 
     with open(LOGS_DIR / 'results.json', 'w') as f:
         json.dump({'args': vars(args), 'history': history,
-                   'n_scenes': len(tiff_pairs),
                    'n_patches': len(dataset)}, f, indent=2)
 
     send_email(
         f"SAR MAE Stage 1 done — final loss {history[-1]['loss']:.4f}",
-        f"Scenes: {len(tiff_pairs)} (Aug–Dec 2024)\n"
         f"Patches: {len(dataset):,}\n"
         f"Epochs: {args.epochs}\n"
         f"Final loss: {history[-1]['loss']:.4f}\n"
         f"Backbone saved to: {MODELS_DIR}/backbone.pt\n\n"
-        f"NOTE: Jan–May 2024 scenes not included — download before final paper run."
+        f"NOTE: Jan–Apr 2024 scenes not included — download before final paper run.\n"
+        f"NOTE: Gulf of Mexico only — add global scenes for geographic diversity."
     )
 
 

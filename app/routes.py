@@ -734,3 +734,198 @@ def api_sar_refresh():
     _sar_index = None
     _build_sar_index()
     return jsonify({'ships': len(_sar_index)})
+
+
+# ── Umbra Sub-Meter SAR Ship routes ───────────────────────────────────────────
+
+UMBRA_CHIP_DIRS = {
+    'la':         Path('/Volumes/Machine Learning/umbra_ship_chips_la'),
+    'ny':         Path('/Volumes/Machine Learning/umbra_ship_chips_ny'),
+    'savannah':   Path('/Volumes/Machine Learning/umbra_ship_chips_savannah'),
+    'chesapeake': Path('/Volumes/Machine Learning/umbra_ship_chips_chesapeake'),
+    'puget':      Path('/Volumes/Machine Learning/umbra_ship_chips_puget'),
+}
+
+_umbra_index = None
+
+
+def _build_umbra_index():
+    global _umbra_index
+    ships = {}
+    for region, chip_dir in UMBRA_CHIP_DIRS.items():
+        if not chip_dir.exists():
+            continue
+        for npz_path in sorted(chip_dir.glob('**/*.npz')):
+            try:
+                d = _np.load(npz_path, allow_pickle=True)
+                mmsi = int(d['mmsi'])
+                scene_id = npz_path.parent.name
+                chip_key = f"{region}/{scene_id}/{npz_path.stem}"
+                chip = {
+                    'chip_key':    chip_key,
+                    'region':      region,
+                    'scene_id':    scene_id,
+                    'acq_time':    str(d['acq_time']),
+                    'vessel_name': str(d['vessel_name']),
+                    'sog':         float(d['sog']),
+                    'heading':     float(d['heading']),
+                    'lat':         float(d['lat']),
+                    'lon':         float(d['lon']),
+                    'dt_sec':      float(d['dt_sec']),
+                    'n_other_large': int(d['n_other_large']) if 'n_other_large' in d else 0,
+                    'clean':       bool(d['clean']) if 'clean' in d else True,
+                }
+                if mmsi not in ships:
+                    ships[mmsi] = {
+                        'mmsi':         mmsi,
+                        'vessel_name':  str(d['vessel_name']),
+                        'vessel_type':  int(d['vessel_type']) if 'vessel_type' in d else -1,
+                        'length_m':     float(d['length_m']) if 'length_m' in d else 0,
+                        'passes':            0,
+                        'clean_passes':      0,
+                        'max_sog':           0.0,
+                        'regions':           set(),
+                        'chips':             [],
+                    }
+                s = ships[mmsi]
+                s['passes'] += 1
+                if chip['clean']:
+                    s['clean_passes'] += 1
+                s['max_sog'] = max(s['max_sog'], chip['sog'])
+                s['regions'].add(region)
+                s['chips'].append(chip)
+            except Exception:
+                continue
+    for s in ships.values():
+        s['regions'] = sorted(s['regions'])
+    _umbra_index = list(ships.values())
+
+
+@bp.route('/umbra-ships')
+def umbra_ships():
+    return render_template('umbra_ships.html')
+
+
+@bp.route('/api/umbra/labels')
+def api_umbra_labels():
+    """Resolved AIS labels for all Umbra vessels."""
+    labels_path = Path(__file__).parent.parent / 'data' / 'resolved_umbra_labels.json'
+    if not labels_path.exists():
+        return jsonify({})
+    import json as _json
+    with open(labels_path) as f:
+        return jsonify(_json.load(f))
+
+
+@bp.route('/umbra-chip/<region>/<scene_id>/<stem>')
+def serve_umbra_chip(region, scene_id, stem):
+    """Serve an Umbra ship chip as JPEG.
+
+    Rendering: log-compress → 3×3 speckle filter → adaptive percentile stretch.
+    The ship stands out bright against gray sea/port clutter (no background
+    subtraction, which removed spatial context and made chips unreadable).
+    """
+    import io as _io
+    from PIL import Image as PILImage, ImageDraw
+    from scipy.ndimage import uniform_filter
+
+    size      = min(int(request.args.get('size', 256)), 1024)
+    zoom      = request.args.get('zoom', '0') not in ('0', 'false', '')
+    length_m  = float(request.args.get('length', 0) or 0)
+
+    chip_dir = UMBRA_CHIP_DIRS.get(region)
+    if not chip_dir:
+        abort(404)
+    npz_path = chip_dir / scene_id / (stem + '.npz')
+    if not npz_path.exists():
+        abort(404)
+    try:
+        d = _np.load(npz_path, allow_pickle=True)
+        chip = d['chip'].astype(_np.float32)
+
+        # Adaptive center crop based on vessel length (2.5× length context window)
+        # Falls back to inner-half crop when length unknown.
+        # At ~0.5m GSD: 1px ≈ 0.5m → length_m / 0.5 = ship pixels
+        if zoom and chip.shape[0] >= 512:
+            if length_m > 0:
+                crop_m  = length_m * 2.5
+                crop_px = min(chip.shape[0], max(128, int(crop_m / 0.5)))
+            else:
+                crop_px = chip.shape[0] // 2      # default: inner half
+            margin = (chip.shape[0] - crop_px) // 2
+            chip = chip[margin:margin+crop_px, margin:margin+crop_px]
+
+        # Speckle reduction: 3×3 boxcar filter on amplitude (fast, preserves edges)
+        chip_filt = uniform_filter(chip, size=3)
+
+        # Log-compress: maps [1, 255] → [0, 5.5]; ships still much brighter than sea
+        lc = _np.log1p(chip_filt)
+
+        # Adaptive percentile stretch — preserves sea/port context (no BG subtraction)
+        p2,  p98 = _np.percentile(lc, [2, 98])
+        px = _np.clip((lc - p2) / max(p98 - p2, 1e-6), 0, 1)
+
+        # Mild gamma boost (0.75) so midtone sea clutter is visible gray, not black
+        px = px ** 0.75
+        px = (px * 255).astype(_np.uint8)
+
+        img = PILImage.fromarray(px, mode='L').convert('RGB')
+        if size != img.width:
+            img = img.resize((size, size), PILImage.LANCZOS)
+
+        draw = ImageDraw.Draw(img)
+
+        # Scale bar: bottom-left corner
+        scene_m  = chip.shape[0] * 0.5 if zoom else 1024   # actual crop in meters
+        m_per_px = scene_m / size
+        bar_m    = 100 if scene_m >= 512 else 50
+        bar_px   = int(bar_m / m_per_px)
+        bx0, by  = 10, size - 18
+        draw.rectangle([(bx0, by), (bx0 + bar_px, by + 5)], fill=(255, 200, 0))
+        try:
+            from PIL import ImageFont
+            font = ImageFont.load_default()
+            draw.text((bx0, by - 12), f'{bar_m}m', fill=(255, 200, 0), font=font)
+        except Exception:
+            pass
+
+        # Red crosshair at ship center (smaller than the old box — less obtrusive)
+        cx, cy = size // 2, size // 2
+        arm   = max(14, size // 12)
+        lw    = max(1, size // 192)
+        color = (255, 60, 60)
+        draw.line([(cx - arm, cy), (cx + arm, cy)], fill=color, width=lw)
+        draw.line([(cx, cy - arm), (cx, cy + arm)], fill=color, width=lw)
+
+        buf = _io.BytesIO()
+        img.save(buf, format='JPEG', quality=92)
+        buf.seek(0)
+        return send_file(buf, mimetype='image/jpeg')
+    except Exception:
+        abort(500)
+
+
+@bp.route('/api/umbra/ships')
+def api_umbra_ships():
+    if _umbra_index is None:
+        _build_umbra_index()
+    summaries = [{k: v for k, v in s.items() if k != 'chips'} for s in _umbra_index]
+    return jsonify({'ships': summaries, 'total': len(summaries)})
+
+
+@bp.route('/api/umbra/ship/<int:mmsi>')
+def api_umbra_ship(mmsi):
+    if _umbra_index is None:
+        _build_umbra_index()
+    ship = next((s for s in _umbra_index if s['mmsi'] == mmsi), None)
+    if not ship:
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify({'mmsi': mmsi, 'chips': ship['chips']})
+
+
+@bp.route('/api/umbra/refresh')
+def api_umbra_refresh():
+    global _umbra_index
+    _umbra_index = None
+    _build_umbra_index()
+    return jsonify({'ships': len(_umbra_index)})

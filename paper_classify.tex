@@ -1,4 +1,5 @@
 \documentclass[journal]{IEEEtran}
+\usepackage[T1]{fontenc}
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{graphicx}
@@ -7,6 +8,7 @@
 \usepackage{url}
 \usepackage{xcolor}
 \usepackage{tikz}
+\usepackage[section]{placeins}
 \usetikzlibrary{arrows.meta, positioning, fit, backgrounds}
 
 \begin{document}
@@ -15,8 +17,8 @@
 via Multi-Signal AIS Label Resolution and SAR-Native Backbone}
 
 \author{Mousa~Shaya,~\IEEEmembership{}
-\thanks{M. Shaya is with Shaya Software and Systems LLC, Acton, MA, and
-Arizona State University, Tempe, AZ (e-mail: mousa.shaya@gmail.com).}}
+\thanks{M. Shaya is with the School of Computing and Augmented Intelligence,
+Arizona State University, Tempe, AZ 85281 USA (e-mail: mousa.shaya@gmail.com).}}
 
 \maketitle
 
@@ -43,7 +45,8 @@ Rank-1 accuracy of 5.1\% on 49 test identities represents 2.5$\times$
 above random chance and establishes a meaningful baseline for this novel
 task.
 Our pipeline, labels, and dataset of 18,342 GRD chips from 2,088
-MMSI-labeled vessels are released publicly.
+MMSI-labeled vessels are publicly available at
+\url{https://doi.org/10.5281/zenodo.21000650}.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -58,6 +61,18 @@ domain awareness
 Automatic ship type classification from Synthetic Aperture Radar (SAR)
 imagery supports maritime domain awareness tasks including sanctions
 enforcement, fisheries monitoring, and port state control~\cite{zhang2021,hou2020}.
+SAR is particularly valuable for maritime surveillance because it operates
+day and night, penetrates cloud cover, and cannot be evaded by vessel
+operators the way optical sensors can.
+The Automatic Identification System (AIS) provides vessel position and
+identity broadcasts that complement SAR imagery: when AIS is active,
+it enables tracking of individual vessels across multiple satellite passes.
+However, an estimated 10--20\% of global cargo tonnage operates with
+AIS disabled or spoofed at any given time---so-called ``dark vessels''
+engaged in sanctions evasion, illegal fishing, or illicit cargo transfer.
+A classifier trained on labeled SAR chips can potentially identify vessel
+type even in the absence of AIS, filling a critical gap in maritime
+monitoring.
 Yet two barriers limit the scalability and reproducibility of existing
 classification pipelines.
 
@@ -73,7 +88,7 @@ where ship density justifies the curation effort, leaving open-water
 regions and small-traffic areas unrepresented.
 
 \textit{AIS noise.}
-Even with manual verification, raw AIS vessel type codes are unreliable:
+Even with manual verification, raw AIS vessel type codes are unreliable~\cite{harati2007ais}:
 operators frequently transmit code~0 (``not specified''), misuse
 categories, or leave type fields unchanged across vessel reflagging.
 Training directly on AIS codes without noise mitigation produces
@@ -110,8 +125,12 @@ verification; their k-NN baseline achieves 75--79\% OA on three classes
 (Tanker, Container, Bulk Carrier).
 FUSAR-Ship~\cite{hou2020} extends this with Gaofen-3 high-resolution
 imagery.
-Both datasets require manual curation steps that are not reproducible
-from freely available data alone.
+SAR-Ship~\cite{wang2019sarship} contributes 43,819 Sentinel-1 and Gaofen-3
+chips spanning nine vessel categories from Chinese coastal waters,
+while HRSID~\cite{wei2020hrsid} provides 5,604 high-resolution
+Sentinel-1 and TerraSAR-X chips for instance segmentation.
+All of these datasets rely on manual curation steps that are not
+reproducible from freely available data alone.
 
 \textbf{Ship type classification with DL.}
 A comprehensive survey~\cite{slesinski2025} of 74 studies using OpenSARShip
@@ -123,22 +142,27 @@ Our pipeline achieves 83.8\% OA with zero manual curation---competitive
 with the published range.
 
 \textbf{SAR-pretrained foundations.}
-CROMA~\cite{fuller2023} is a contrastive masked autoencoder pretrained on
-Sentinel-1 GRD paired with Sentinel-2 optical imagery.
-Its SAR encoder, a ViT-Base producing 768-dimensional embeddings,
-is the only publicly available foundation model pretrained natively on
+CROMA~\cite{fuller2023} is a contrastive masked autoencoder~\cite{he2022mae}
+pretrained on Sentinel-1 GRD paired with Sentinel-2 optical imagery.
+Its SAR encoder is a ViT-Base~\cite{dosovitskiy2021} producing 768-dimensional
+embeddings---the only publicly available foundation model pretrained natively on
 C-band SAR data at this scale.
-Prior ship classification work relied on optical backbones (DINOv2, ResNet,
+SSL4EO-S12~\cite{wang2023ssl4eo} is a complementary multi-temporal Sentinel-1/2
+pre-training dataset, but targets scene-level tasks rather than vessel-level
+object classification.
+Prior ship classification work relied on optical backbones (DINOv2, ResNet~\cite{he2016},
 VGG) applied to pseudo-color SAR renders, introducing a domain mismatch
 that our CROMA experiments quantify.
 
 \textbf{Ship re-identification.}
-Vehicle re-identification (re-ID) is well studied in optical imagery
-using ArcFace~\cite{deng2019} and metric learning, but SAR ship re-ID
-has received no published attention.
-The closest related work applies ISAR for target recognition in
-controlled scenarios; tracking the same commercial vessel across multiple
-satellite passes at C-band GRD resolution is an open problem.
+Person and vehicle re-ID in optical imagery is well studied, with deep metric
+learning methods~\cite{ye2021reid} consistently benefiting from angular margin
+losses such as ArcFace~\cite{deng2019}.
+SAR ship re-ID has received no published attention: existing work applies
+inverse SAR (ISAR) for target recognition in controlled scenarios, while
+tracking commercial vessels across multiple satellite passes at C-band GRD
+resolution is an open problem.
+We establish the first baseline for this task using MMSI as ground-truth identity.
 
 % ── III. Dataset and Pipeline ──────────────────────────────────────────────────
 \section{Dataset and Pipeline}
@@ -146,7 +170,7 @@ satellite passes at C-band GRD resolution is an open problem.
 
 \subsection{Data Sources}
 
-We acquired 241 Sentinel-1 IW GRD scenes over the Gulf of Mexico
+We acquired 241 Sentinel-1 IW GRD scenes~\cite{torres2012} over the Gulf of Mexico
 spanning August--December 2024 from the ASF DAAC (free, Earthdata login).
 GRD IW mode provides 10\,m pixel spacing in VV and VH polarisations,
 with effective resolution $\sim$20\,m~$\times$~22\,m.
@@ -174,6 +198,49 @@ applied beyond a 30-chip minimum per class.
 This process produced \textbf{18,342 chips} from \textbf{2,088 unique vessels}.
 Of these, 1,942 vessels (93\%) appear in two or more passes, enabling
 within-identity train/test splits for re-identification.
+Figure~\ref{fig:chips} shows representative VV-polarisation chips
+for each of the three classification classes.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{chip_examples.png}
+\caption{Representative Sentinel-1 IW GRD VV chips (200$\times$200\,px
+centre crop of the 512$\times$512 chip; scale bar = 100\,m).
+\textit{Left:} 274\,m Tanker underway at 12.3\,kn --- strong cross-shaped
+response from the large metal hull.
+\textit{Centre:} 180\,m Cargo vessel at 11.5\,kn --- smaller but
+distinct point-scatterer signature.
+\textit{Right:} 55\,m Fishing vessel at 7.8\,kn in open Gulf water ---
+weaker return consistent with smaller cross-section.
+All chips are from HIGH-confidence resolved labels.}
+\label{fig:chips}
+\end{figure}
+
+\subsection{Dataset Statistics}
+
+Figure~\ref{fig:stats} summarises the vessel distribution.
+Tanker dominates both HIGH and MEDIUM confidence tiers (544 and 502 vessels),
+while Fishing is severely under-represented (14 HIGH, 18 MEDIUM).
+Tug/Special vessels receive no HIGH-confidence assignments because their
+AIS codes (31, 32, 50--59) rarely co-occur with length or GFW signals
+that would provide a confirming vote.
+The length histogram reveals the physical basis for classifier difficulty:
+Tanker and Cargo vessel lengths overlap substantially in the 100--200\,m
+range, while Fishing vessels are concentrated below 80\,m.
+The 200\,m threshold used by the length resolver is visible as a natural
+gap in the Tanker distribution.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{dataset_stats.png}
+\caption{Dataset statistics.
+\textit{Left:} Vessel counts per class, split by resolver confidence.
+Tug/Special receives no HIGH-confidence assignments (all MEDIUM).
+\textit{Right:} Ship length distribution for HIGH-confidence vessels
+(3 classification classes). Tanker and Cargo overlap in the 100--200\,m
+range; the dashed line marks the 200\,m length-resolver threshold.}
+\label{fig:stats}
+\end{figure}
 
 \subsection{Input Representation}
 
@@ -184,6 +251,7 @@ via the 2nd--98th percentile of finite pixels.
 The CROMA backbone accepts the two raw channels directly via its own
 preprocessing (log-scale normalisation to $[0,1]$ per channel).
 
+\FloatBarrier
 % ── IV. Multi-Signal Label Resolution ─────────────────────────────────────────
 \section{Multi-Signal Label Resolution}
 \label{sec:resolver}
@@ -191,10 +259,15 @@ preprocessing (log-scale normalisation to $[0,1]$ per channel).
 \subsection{Motivation}
 
 Raw AIS vessel type codes suffer from widespread miscoding.
-To quantify the impact, we trained our classifier with raw AIS codes
-as labels and measured 60.1\% OA---far below the 83.8\% achieved after
-resolver-based cleaning.
-The 23.7~pp gap is attributable to label noise rather than model capacity.
+To quantify the impact, we trained a DINOv2 classifier with raw AIS
+codes as labels on the same matched chip set.
+Overall accuracy reaches 77.5\%, but macro-F1 collapses to 44.1\%:
+the model predicts Tanker for virtually every chip (Fishing recall 0\%),
+exploiting class imbalance rather than learning discriminative features.
+After resolver-based label cleaning, macro-F1 rises to 76.3\%---a
+32.2~pp improvement---while Fishing recall recovers to 85.7\%.
+The OA gap (77.5\% $\to$ 83.8\%) understates the damage: the resolver
+prevents classifier collapse, not merely label noise.
 
 \subsection{Resolver Design}
 
@@ -213,7 +286,8 @@ $<$50\,m $\to$ Tug/Special.
 The 50--200\,m range is ambiguous and casts no vote.
 
 \textbf{Signal 3: GFW classification.}
-We query the Global Fishing Watch Vessel Identity API for each MMSI.
+We query the Global Fishing Watch~\cite{kroodsma2018} Vessel Identity API
+for each MMSI.
 The inferred vessel type (TANKER, CARGO, FISHING, etc.) is mapped to
 our four classes where possible; OTHER and missing entries cast no vote.
 
@@ -226,23 +300,154 @@ fishing keywords (FISHING, TRAWL, SEINER).
 
 \subsection{Confidence Voting}
 
-The four votes are tallied. If the leading class receives $\geq$3 votes,
-or 2 votes with no dissenting votes, confidence is \textbf{HIGH}.
-Two votes with one or more dissenting votes yields \textbf{MEDIUM}.
-Fewer than two agreeing votes yields \textbf{MEDIUM} (uncontested) or
-\textbf{UNRESOLVED} (contested).
+Each of the four signals independently casts a vote for a vessel class,
+or abstains if it has no applicable information.
+Votes are tallied across signals: three or more agreeing on the same
+class---or two agreeing with no dissenter---yields \textsc{High} confidence.
+Two agreeing signals with at least one dissenter, or a single uncontested
+signal, yields \textsc{Medium}.
+Fewer than two non-conflicting signals yield \textsc{Unresolved}.
 
-Applied to 2,088 vessels:
-\begin{itemize}
-  \item \textbf{87.3\%} resolved (HIGH: 1,312; MEDIUM: 511; Unresolved: 265)
-  \item HIGH-confidence Tanker: 1,046 \quad Cargo: 516 \quad
-        Tug/Special: 229 \quad Fishing: 32
-\end{itemize}
+Table~\ref{tab:resolver_examples} illustrates all four outcomes on real
+vessels drawn from our dataset.
+COBIA LNG is the ideal case: AIS type, physical length, and vessel name
+all independently identify it as a Tanker.
+THOR INFINITY shows a clean two-signal agreement between AIS type code
+and GFW classification; length falls in the ambiguous 50--200\,m range
+and correctly abstains.
+GOLDEN FROST demonstrates graceful conflict handling: its 229\,m length
+exceeds the 200\,m Tanker threshold, but AIS type and GFW both say Cargo,
+so the resolver assigns Cargo at \textsc{Medium} confidence rather than
+promoting the minority vote.
+DOLE MAYA illustrates the single-signal \textsc{Medium} case: AIS code 90
+(``Other type'') maps to no class, length is in the ambiguous range, and
+only the GFW classification provides a vote.
+NANCY PETERKIN exposes a genuine limitation: AIS code 52 classifies the
+vessel as an articulated tug-barge, yet its 206\,m length far exceeds
+any plausible tug size, suggesting miscoding.
+With one vote for each of two incompatible classes, the resolver
+correctly withholds a label rather than guessing.
+
+\begin{table*}[t]
+\centering
+\caption{Worked resolver examples from the dataset.
+Each signal column shows the raw value and its resulting vote
+($\to$ class, or --- if the signal abstains).
+The four rows illustrate \textsc{High} (3-vote and 2-vote uncontested),
+\textsc{Medium} (conflicted 2-vote and single-vote), and
+\textsc{Unresolved} outcomes.}
+\label{tab:resolver_examples}
+\small
+\begin{tabular}{@{}lllllll@{}}
+\toprule
+Vessel & AIS code & Length (m) & GFW type & Name keyword & Vote tally & Conf./Label \\
+\midrule
+COBIA LNG
+  & 84 $\to$ Tanker & 299 $\to$ Tanker & OTHER $\to$ ---   & ``LNG'' $\to$ Tanker
+  & 3$\times$ Tanker & \textsc{High} / Tanker \\
+THOR INFINITY
+  & 70 $\to$ Cargo  & 190 $\to$ ---    & CARGO $\to$ Cargo & ---
+  & 2$\times$ Cargo  & \textsc{High} / Cargo \\
+GOLDEN FROST
+  & 70 $\to$ Cargo  & 229 $\to$ Tanker & CARGO $\to$ Cargo & ---
+  & 2$\times$ Cargo, 1$\times$ Tanker & \textsc{Medium} / Cargo \\
+DOLE MAYA
+  & 90 $\to$ ---    & 195 $\to$ ---    & CARGO $\to$ Cargo & ---
+  & 1$\times$ Cargo  & \textsc{Medium} / Cargo \\
+NANCY PETERKIN
+  & 52 $\to$ Tug    & 206 $\to$ Tanker & OTHER $\to$ ---   & ---
+  & 1$\times$ Tug, 1$\times$ Tanker & \textsc{Unresolved} / --- \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Applied to 2,088 vessels, the resolver achieves \textbf{87.3\%} resolution;
+Table~\ref{tab:resolver} details per-signal coverage and per-class outcomes.
+HIGH confidence (790 vessels) requires $\geq$3 agreeing votes, or 2 uncontested;
+MEDIUM (1,033 vessels) requires 2 votes with at most one dissenter;
+265 vessels remain Unresolved.
+
+\begin{table}[t]
+\centering
+\caption{AIS label resolver statistics for the 2,088 vessels in our dataset.
+\textit{Coverage}: vessels for which the signal cast a non-null vote.
+\textit{Decisive}: vessels where that signal contributed to the winning label.}
+\label{tab:resolver}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Signal & Coverage & Decisive \\
+\midrule
+AIS type code      & 1,911~(91.5\%) & 1,911~(91.5\%) \\
+Ship length        &   839~(40.2\%) &   580~(27.8\%) \\
+GFW classification &   426~(20.4\%) &   400~(19.2\%) \\
+Vessel name        &    19~(0.9\%)  &    19~(0.9\%)  \\
+\bottomrule
+\end{tabular}
+\vspace{4pt}
+\begin{tabular}{@{}lrcccc@{}}
+\toprule
+Confidence & Count & Tanker & Cargo & Fishing & Tug/Spcl \\
+\midrule
+HIGH       &    790 & 544 & 232 &  14 &   0 \\
+MEDIUM     & 1,033  & 502 & 284 &  18 & 229 \\
+Unresolved &    265 &  -- &  -- &  -- &  -- \\
+\midrule
+Resolved   & 1,823  & 1,046 & 516 & 32 & 229 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Signal Ablation}
+
+Table~\ref{tab:ablation} quantifies each signal's contribution by removing
+it from the resolver and re-computing resolution outcomes.
+Removing the AIS type code causes the largest drop: resolution falls from
+87.3\% to 45.6\% ($-$41.3~pp) and HIGH-confidence assignments collapse from
+790 to just 18, confirming that AIS codes---despite their noise---remain
+the primary driver.
+GFW classification is the most valuable secondary signal ($-$133 resolved,
+$-$233 HIGH without it).
+Vessel name keywords contribute marginally because only 0.9\% of vessels
+have discriminative names.
+Ship length presents a subtle trade-off: removing it slightly \textit{increases}
+the overall resolution rate (86.9\%~$\to$~91.7\%) because length is a noisy
+signal that creates conflicts when it disagrees with other votes, pushing
+some MEDIUM-confidence vessels to Unresolved.
+However, removing length cuts HIGH-confidence assignments nearly in half
+(790~$\to$~402), since it contributes a decisive confirming vote for
+large Tankers.
+We retain all four signals in the final resolver because HIGH-confidence
+labels are the inputs to classification training.
+
+\begin{table}[t]
+\centering
+\caption{Resolver signal ablation over all 2,088 vessels.
+Each row removes one signal; all others remain active.
+HIGH* counts are critical for classification: only HIGH-confidence
+labels enter the classification training set.}
+\label{tab:ablation}
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Condition & HIGH* & MED & Unres. & Res.\,\% & $\Delta$Res. \\
+\midrule
+Full resolver      & 790 & 1,033 & 265 & 87.3\% & --- \\
+Remove AIS type    &  18 &   935 & 1,135 & 45.6\% & $-$870 \\
+Remove GFW         & 557 & 1,133 &   398 & 80.9\% & $-$133 \\
+Remove length      & 402 & 1,512 &   174 & 91.7\% & $+$91\textsuperscript{a} \\
+Remove name kw.    & 783 & 1,031 &   274 & 86.9\% & $-$9 \\
+\bottomrule
+\multicolumn{6}{@{}l@{}}{\textsuperscript{a}Length creates conflicts; removing it resolves some} \\
+\multicolumn{6}{@{}l@{}}{borderline vessels but halves HIGH-confidence count.} \\
+\end{tabular}
+\end{table}
 
 The three-class experiment (Tanker / Cargo / Fishing) uses only
-HIGH-confidence labels because Tug/Special provides too few chips for
-a reliable split.
+HIGH-confidence labels because Tug/Special vessels receive no HIGH-confidence
+assignments (all 229 require MEDIUM confidence, producing too few chips for
+a reliable split).
 
+\FloatBarrier
 % ── V. Classification Experiments ─────────────────────────────────────────────
 \section{Classification Experiments}
 \label{sec:experiments}
@@ -261,15 +466,18 @@ Training uses AdamW with a backbone learning rate of $10^{-5}$ and a
 head rate of $10^{-4}$, cosine annealing over 30 epochs, batch size 64.
 Augmentation: random horizontal/vertical flips and 180$^\circ$ rotation.
 
+\textbf{ResNet-50:} Residual CNN~\cite{he2016} pretrained on ImageNet;
+$\sim$25M parameters; fully fine-tuned with a linear classification head.
+
 \textbf{DINOv2 ViT-S/14:} Pretrained on optical imagery~\cite{oquab2023};
 384-dim CLS token; last 4 transformer blocks unfrozen; linear classification
 head.
 
-\textbf{ConvNeXt-Small:} CNN architecture pretrained on ImageNet;
+\textbf{ConvNeXt-Small:} Modernized CNN~\cite{liu2022} pretrained on ImageNet;
 $\sim$50M parameters; full fine-tuning.
 
-\textbf{CROMA:} SAR-native ViT-Base pretrained on Sentinel-1
-GRD + Sentinel-2 paired data~\cite{fuller2023};
+\textbf{CROMA:} SAR-native ViT-Base~\cite{dosovitskiy2021} pretrained on
+Sentinel-1 GRD + Sentinel-2 paired data via masked autoencoding~\cite{he2022mae,fuller2023};
 768-dim global average pooling of the SAR encoder;
 last 4 transformer blocks unfrozen; linear classification head.
 
@@ -278,15 +486,19 @@ last 4 transformer blocks unfrozen; linear classification head.
 Table~\ref{tab:backbone} reports test-set performance.
 CROMA outperforms both optical-domain baselines across all metrics.
 
-\begin{table}[h]
+\begin{table}[t]
 \centering
 \caption{Backbone comparison --- 3-class, matched chips (1,283 total).
-Per-class values are F1 scores.}
+Per-class values are F1 scores. AIS-only row uses raw type codes without
+resolver; all other rows use resolved HIGH-confidence labels.}
 \label{tab:backbone}
 \begin{tabular}{lccccc}
 \toprule
 Backbone & OA (\%) & Macro-F1 (\%) & Tanker & Cargo & Fishing \\
 \midrule
+DINOv2 (AIS-only) & 77.5 & 44.1 & 92.9\% & 39.5\% & 0.0\% \\
+\midrule
+ResNet-50        & 83.2 & 74.4 & 95.7\% & 41.9\% & 85.7\% \\
 DINOv2 ViT-S/14  & 77.0 & 67.6 & 87.2\% & 44.2\% & 71.4\% \\
 ConvNeXt-Small   & 81.2 & 66.8 & 96.5\% & 32.6\% & 71.4\% \\
 \textbf{CROMA}   & \textbf{83.8} & \textbf{76.3} & \textbf{94.3\%} & \textbf{48.8\%} & \textbf{85.7\%} \\
@@ -294,28 +506,93 @@ ConvNeXt-Small   & 81.2 & 66.8 & 96.5\% & 32.6\% & 71.4\% \\
 \end{tabular}
 \end{table}
 
+Figure~\ref{fig:curves} shows validation accuracy and macro-F1 across
+30 training epochs.
+CROMA converges more smoothly than the optical backbones, which exhibit
+larger epoch-to-epoch fluctuations---consistent with the domain mismatch
+between their ImageNet pretraining statistics and SAR backscatter.
+ResNet-50, despite being the smallest model, achieves competitive
+accuracy through full fine-tuning; DINOv2 shows slower convergence,
+reflecting the larger distributional shift from optical to SAR inputs.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{training_curves.png}
+\caption{Validation overall accuracy (\textit{left}) and macro-F1
+(\textit{right}) across 30 training epochs for all four backbones.
+CROMA (solid green) converges most smoothly; optical-domain backbones
+show higher epoch-to-epoch variance due to domain mismatch with SAR
+backscatter statistics.}
+\label{fig:curves}
+\end{figure}
+
+\subsection{Comparison with Published Results}
+
+Table~\ref{tab:compare} places our results in the context of published
+OpenSARShip benchmarks.
+Direct comparison is complicated by differences in class definitions
+(OpenSARShip uses Container/Bulk/Tanker; we use Cargo/Tanker/Fishing)
+and dataset geography (Chinese ports vs.\ Gulf of Mexico open water).
+Nevertheless, our zero-curation pipeline achieves 83.8\% OA---within
+the 77--93\% range reported across 74 studies in~\cite{slesinski2025}
+for manually curated datasets---while requiring no manual annotation.
+
+\begin{table}[t]
+\centering
+\caption{Comparison with representative published results on SAR ship
+classification. Our dataset uses a different class split (Cargo/Tanker/Fishing)
+and geographic region (Gulf of Mexico) from OpenSARShip benchmarks.}
+\label{tab:compare}
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+Dataset & Method & OA (\%) & Classes \\
+\midrule
+OpenSARShip~\cite{huang2018}  & k-NN baseline       & 75--79 & 3 \\
+OpenSARShip~\cite{slesinski2025} & DL methods (range) & 77--93 & 3 \\
+OpenSARShip~\cite{zeng2021}  & CNN + AIS fusion    & 93.3   & 3 \\
+\midrule
+\textbf{Ours (Gulf)} & CROMA (zero-curation) & \textbf{83.8} & 3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Confusion Analysis}
 
 The dominant error across all backbones is Cargo predicted as Tanker.
-Figure~\ref{fig:umap} shows CROMA GRD embeddings in UMAP projection:
-Cargo and Tanker feature vectors substantially overlap, while Fishing
-forms two tight, well-separated clusters.
+Figure~\ref{fig:confusion} shows the CROMA per-class confusion matrix
+on the test set: 22 of 43 Cargo chips (51\%) are misclassified as Tanker,
+while Tanker recall is 94.3\% and Fishing recall is 85.7\%.
+Figure~\ref{fig:umap} further shows CROMA GRD embeddings in UMAP
+projection: Cargo and Tanker feature vectors substantially overlap, while
+Fishing forms two tight, well-separated clusters.
 This is consistent with the physical reality: both Cargo and Tanker
 vessels at 10\,m GRD resolution present as elongated point-scatterer
 arrays, and the AIS ``Cargo'' category (codes 70--79) encompasses
 visually diverse sub-types (container, bulk carrier, general cargo)
 that are individually closer to Tankers than to each other.
 
-\begin{figure}[h]
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\columnwidth]{confusion_matrix_croma.png}
+\caption{Per-class confusion matrix for CROMA on the 3-class test set
+(191 chips). Row-normalised percentages with raw counts in parentheses.
+The dominant error is Cargo $\to$ Tanker (51\%): both vessel types
+present as elongated point-scatterer arrays at 10\,m GRD resolution.}
+\label{fig:confusion}
+\end{figure}
+
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=0.9\columnwidth]{umap_croma_grd_classify.png}
-\caption{UMAP projection of CROMA GRD embeddings (test set).
+\caption{UMAP~\cite{mcinnes2018} projection of CROMA GRD embeddings (test set).
 Fishing vessels form tight isolated clusters (two orientation modes);
 Cargo substantially overlaps Tanker, explaining the dominant
 classification error.}
 \label{fig:umap}
 \end{figure}
 
+\FloatBarrier
 % ── VI. Ship Re-Identification ─────────────────────────────────────────────────
 \section{Ship Re-Identification}
 \label{sec:reid}
@@ -344,7 +621,7 @@ Precision (mAP), evaluated as nearest-neighbor retrieval in embedding space.
 
 \subsection{Results}
 
-\begin{table}[h]
+\begin{table}[t]
 \centering
 \caption{Tanker re-identification with CROMA + ArcFace (49 test ships)}
 \label{tab:reid}
@@ -368,6 +645,52 @@ Rank-5 at 14.0\% (1.4$\times$ random) and mAP at 12.3\% confirm a
 learnable identity signal exists in CROMA embeddings beyond random
 retrieval.
 
+\subsection{Embedding Analysis}
+
+Figure~\ref{fig:reid_umap} projects the re-ID embeddings into two
+dimensions via UMAP, colored first by vessel type and then by individual
+MMSI identity.
+The type projection (left) shows clear macro-structure: Tanker/LNG
+vessels cluster at the top, Tug/Towing vessels form several dense
+satellite groups, and Cargo occupies a broad central region.
+The network is not simply memorizing noise---it has learned physically
+meaningful representations of vessel class and size from Sentinel-1
+backscatter.
+Yet the identity projection (right) of the same embedding space reveals
+no within-cluster separation: every cluster is a rainbow of distinct
+MMSIs.
+The model cannot tell \textit{which} tanker from \textit{that there is
+a tanker}.
+At 10\,m GRD resolution, individual hull geometry and superstructure
+detail---the cues that would separate two 250\,m crude carriers---fall
+below the resolution floor.
+This establishes both the feasibility bound of GRD re-ID and the
+motivation for sub-meter SAR as future work.
+
+\begin{figure*}[t]
+\centering
+\begin{minipage}{0.49\textwidth}
+  \centering
+  \includegraphics[width=\textwidth]{umap_ship_reid_type.png}
+\end{minipage}\hfill
+\begin{minipage}{0.49\textwidth}
+  \centering
+  \includegraphics[width=\textwidth]{umap_ship_reid_identity.png}
+\end{minipage}
+\caption{UMAP~\cite{mcinnes2018} of CROMA re-ID embeddings (11,322 chips, 1,069 vessels,
+$\geq$4 passes and $\geq$100\,m length), colored by vessel type
+(\textit{left}) and by MMSI identity (\textit{right}).
+The type projection reveals clear macro-structure at 10\,m GRD
+resolution: Tanker/LNG, Tug, and Cargo clusters emerge and separate.
+The identity projection of the same space shows no within-cluster
+separation---each cluster is a mixture of distinct identities (colors).
+Individual hull signatures fall below the GRD resolution floor,
+establishing the performance ceiling for identity-level retrieval on
+Sentinel-1 data.}
+\label{fig:reid_umap}
+\end{figure*}
+
+\FloatBarrier
 % ── VII. Discussion ────────────────────────────────────────────────────────────
 \section{Discussion}
 
@@ -380,6 +703,13 @@ CROMA's pretraining on paired Sentinel-1 and Sentinel-2 data teaches the
 SAR encoder to extract scattering-mechanism features rather than
 optical-analogue textures, explaining its advantage even when applied
 through a linear head.
+The training curves (Figure~\ref{fig:curves}) reinforce this interpretation:
+CROMA converges more smoothly than optical backbones, which exhibit
+larger validation variance due to domain mismatch.
+Despite this, ResNet-50 matches CROMA's OA (83.2\% vs.\ 83.8\%), suggesting
+that CNN inductive biases partially compensate for domain mismatch when
+fully fine-tuned; the gap is clearest in macro-F1 (+1.9~pp for CROMA),
+where Fishing recall is the deciding factor.
 
 \textbf{Cargo confusion as an inherent limit.}
 The AIS class ``Cargo'' (codes 70--79) is heterogeneous: it covers
@@ -393,14 +723,40 @@ similar confusion between those classes in the 76--89\% OA range~\cite{slesinski
 Our use of the coarser ``Cargo'' label likely increases confusion but
 reflects the realistic scenario where sub-type information is not available
 from AIS alone.
+The confusion matrix (Figure~\ref{fig:confusion}) shows this is almost
+entirely a one-way error: Tanker $\to$ Cargo misclassification is rare
+(7 chips, 5\%), while Cargo $\to$ Tanker (22 chips, 51\%) dominates.
+This asymmetry is physically interpretable: the Tanker class is visually
+coherent (long cylindrical hulls), while the Cargo class is visually
+diverse.
 
-\textbf{Re-ID implications.}
+\textbf{Re-ID implications and dark vessel tracking.}
 The weak but above-chance re-ID signal at GRD resolution suggests that
 CROMA embeddings encode some vessel-specific signature (superstructure
 geometry, cargo load, trim angle) that persists across passes.
-Higher-resolution sensors (TerraSAR-X, Capella Space) would be expected
-to increase re-ID performance substantially; our result establishes a
-lower bound at Sentinel-1 GRD resolution.
+In a dark vessel tracking scenario---where AIS has been disabled---a
+Rank-5 accuracy of 14\% means the true vessel appears in the top-5
+retrieved candidates roughly one in seven queries.
+Combined with geospatial constraints (a vessel cannot teleport between
+passes), this provides a useful prior for analysts.
+Higher-resolution sensors (TerraSAR-X at 1--3\,m, Capella Space at
+0.5\,m) would be expected to increase re-ID performance substantially by
+resolving hull geometry and superstructure detail; our result establishes
+a lower bound at Sentinel-1 GRD resolution.
+
+\textbf{Label resolver design lessons.}
+The signal ablation (Table~\ref{tab:ablation}) reveals that AIS type code
+alone accounts for 91.5\% of resolution decisions---but without the
+secondary signals, overall resolution would drop from 87.3\% to 45.6\%
+and HIGH-confidence assignments would collapse to just 18 vessels.
+The secondary signals matter not by replacing AIS type codes but by
+confirming or overriding them, converting MEDIUM-confidence labels into
+HIGH-confidence ones that are safe to train on.
+The length signal's counter-intuitive behavior (removing it slightly
+increases resolution rate while halving HIGH-confidence count) suggests
+a future improvement: treating length as a soft Bayesian prior rather
+than a hard vote, reducing its tendency to create irresolvable conflicts
+for vessels near the 200\,m Tanker threshold.
 
 \textbf{Pipeline scalability.}
 Because the pipeline uses only free, globally available data sources
@@ -409,6 +765,10 @@ region without port-specific data collection or manual curation.
 The Gulf of Mexico setting---open water with low land clutter---is
 particularly favorable; coastal and port scenes would require additional
 sea-land masking.
+Expanding to other ocean basins (South China Sea, Mediterranean,
+North Sea) would increase vessel diversity and class balance,
+particularly for the under-represented Fishing class (14 HIGH-confidence
+vessels in the current dataset).
 
 % ── VIII. Conclusion ───────────────────────────────────────────────────────────
 \section{Conclusion}
@@ -427,6 +787,13 @@ range~\cite{slesinski2025}).
 A tanker re-identification experiment with ArcFace metric learning
 produces Rank-1 accuracy 2.5$\times$ above random chance, establishing
 a baseline for this novel task at C-band GRD resolution.
+
+\section*{Data Availability}
+The dataset (18,342 Sentinel-1 GRD ship chips, resolved labels, and
+extraction scripts) is publicly available at
+\url{https://doi.org/10.5281/zenodo.21000650}.
+A secondary mirror is available at
+\url{https://huggingface.co/datasets/mshaya/sar-ship-gulf}.
 
 \section*{Acknowledgments}
 The author used Claude (Anthropic) as an AI coding and writing assistant
@@ -473,6 +840,61 @@ recognition,'' in \textit{Proc. IEEE CVPR}, pp.~4690--4699, 2019.
 \bibitem{zeng2021}
 Z. Zeng et al., ``AIS and SAR image fusion for ship classification,''
 \textit{IEEE Geosci. Remote Sens. Lett.}, vol.~18, pp.~647--651, 2021.
+
+\bibitem{he2016}
+K. He, X. Zhang, S. Ren, and J. Sun, ``Deep residual learning for image
+recognition,'' in \textit{Proc. IEEE CVPR}, pp.~770--778, 2016.
+
+\bibitem{liu2022}
+Z. Liu et al., ``A {ConvNet} for the 2020s,'' in \textit{Proc. IEEE CVPR},
+pp.~11976--11986, 2022.
+
+\bibitem{dosovitskiy2021}
+A. Dosovitskiy et al., ``An image is worth 16$\times$16 words: Transformers
+for image recognition at scale,'' in \textit{Proc. ICLR}, 2021.
+
+\bibitem{he2022mae}
+K. He, X. Chen, S. Xie, Y. Li, P. Doll{\'a}r, and R. Girshick, ``Masked
+autoencoders are scalable vision learners,'' in \textit{Proc. IEEE CVPR},
+pp.~16000--16009, 2022.
+
+\bibitem{torres2012}
+R. Torres et al., ``{GMES} {Sentinel-1} mission,'' \textit{Remote Sens.
+Environ.}, vol.~120, pp.~9--24, 2012.
+
+\bibitem{kroodsma2018}
+D.~A. Kroodsma et al., ``Tracking the global footprint of fisheries,''
+\textit{Science}, vol.~359, no.~6378, pp.~904--908, 2018.
+
+\bibitem{mcinnes2018}
+L. McInnes, J. Healy, and J. Melville, ``{UMAP}: Uniform manifold
+approximation and projection for dimension reduction,''
+\textit{arXiv:1802.03426}, 2018.
+
+\bibitem{wang2023ssl4eo}
+Y. Wang et al., ``{SSL4EO-S12}: A large-scale multi-modal, multi-temporal
+dataset for self-supervised learning in Earth observation,'' \textit{IEEE
+Geosci. Remote Sens. Mag.}, vol.~11, no.~3, pp.~98--106, 2023.
+
+\bibitem{wang2019sarship}
+Y. Wang, C. Wang, H. Zhang, Y. Dong, and S. Wei, ``A {SAR} dataset of ship
+detection for deep learning under complex backgrounds,'' \textit{Remote
+Sens.}, vol.~11, no.~7, p.~765, 2019.
+
+\bibitem{wei2020hrsid}
+S. Wei et al., ``{HRSID}: A high-resolution {SAR} images dataset for ship
+detection and instance segmentation,'' \textit{IEEE Access}, vol.~8,
+pp.~120234--120254, 2020.
+
+\bibitem{harati2007ais}
+A. Harati-Mokhtari, A. Wall, P. Brooks, and J. Wang, ``Automatic
+identification system ({AIS}): Data reliability and human error
+implications,'' \textit{J. Navigation}, vol.~60, no.~3, pp.~373--389, 2007.
+
+\bibitem{ye2021reid}
+M. Ye, J. Shen, G. Lin, T. Xiang, L. Shao, and S. C.~H. Hoi, ``Deep
+learning for person re-identification: A survey and outlook,'' \textit{IEEE
+Trans. Pattern Anal. Mach. Intell.}, vol.~44, no.~6, pp.~2872--2893, 2022.
 
 \end{thebibliography}
 

@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Umbra Sub-Meter SAR Ships</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f1117; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+    .app-header { background: #1a1d27; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #2a2d3a; flex-shrink: 0; }
+    .app-title { font-size: 1.1rem; font-weight: 600; color: #f0a060; }
+    .header-nav { display: flex; gap: 8px; flex-wrap: wrap; }
+    .nav-btn { padding: 6px 14px; border-radius: 6px; text-decoration: none; color: #aaa; font-size: 0.85rem; border: 1px solid #2a2d3a; }
+    .nav-btn:hover { background: #2a2d3a; color: #fff; }
+    .nav-btn.active { background: #c2501a; color: #fff; border-color: #c2501a; }
+    .app-body { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Sidebar ── */
+    .sidebar { width: 230px; background: #13161f; padding: 14px; overflow-y: auto; border-right: 1px solid #2a2d3a; flex-shrink: 0; }
+    .sidebar label { display: block; font-size: 0.72rem; color: #777; margin: 12px 0 3px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .sidebar select, .sidebar input[type=text] { width: 100%; background: #1a1d27; color: #e0e0e0; border: 1px solid #2a2d3a; border-radius: 6px; padding: 5px 8px; font-size: 0.82rem; }
+    .sidebar input[type=range] { width: 100%; }
+    .sidebar input[type=checkbox] { margin-right: 6px; }
+    .check-row { display: flex; align-items: center; font-size: 0.82rem; color: #ccc; margin-top: 8px; cursor: pointer; }
+    .count-lbl { font-size: 0.72rem; color: #555; margin-top: 10px; }
+    .range-val { font-size: 0.75rem; color: #888; text-align: right; }
+
+    /* ── Ship list ── */
+    .ship-list-wrap { width: 310px; display: flex; flex-direction: column; border-right: 1px solid #2a2d3a; flex-shrink: 0; }
+    .ship-list { flex: 1; overflow-y: auto; }
+    .ship-card { padding: 10px 14px; border-bottom: 1px solid #1e2130; cursor: pointer; transition: background 0.12s; }
+    .ship-card:hover { background: #1a1d27; }
+    .ship-card.selected { background: #2d1a0a; border-left: 3px solid #c2501a; }
+    .ship-name { font-size: 0.9rem; font-weight: 600; color: #e0e0e0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ship-meta { font-size: 0.72rem; color: #888; margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .badge { padding: 1px 7px; border-radius: 10px; font-size: 0.68rem; font-weight: 600; }
+    .badge-cargo   { background: #1e3a5f; color: #7eb8f7; }
+    .badge-tanker  { background: #3d2200; color: #FF8C00; }
+    .badge-towing  { background: #1e3d1e; color: #6ee7b7; }
+    .badge-other   { background: #2a2a1e; color: #d4d400; }
+    .passes-badge  { background: #2d1a0a; color: #f0a060; padding: 1px 7px; border-radius: 10px; font-size: 0.68rem; font-weight: 600; }
+    .clean-badge   { background: #1e3d2e; color: #86efac; padding: 1px 7px; border-radius: 10px; font-size: 0.68rem; }
+    .dirty-badge   { background: #3d1e1e; color: #fca5a5; padding: 1px 7px; border-radius: 10px; font-size: 0.68rem; }
+    .badge-la       { background: #1e2744; color: #93c5fd; padding: 1px 7px; border-radius: 10px; font-size: 0.68rem; }
+    .badge-ny       { background: #2a1e44; color: #c4b5fd; padding: 1px 7px; border-radius: 10px; font-size: 0.68rem; }
+    .badge-savannah { background: #1e3420; color: #86efac; padding: 1px 7px; border-radius: 10px; font-size: 0.68rem; }
+    .badge-chesapeake { background: #1a2d38; color: #67e8f9; padding: 1px 7px; border-radius: 10px; font-size: 0.68rem; }
+    .badge-puget    { background: #2a1e38; color: #d8b4fe; padding: 1px 7px; border-radius: 10px; font-size: 0.68rem; }
+
+    /* ── Timeline ── */
+    .timeline-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .timeline-header { padding: 14px 18px; border-bottom: 1px solid #2a2d3a; flex-shrink: 0; }
+    .timeline-header h2 { font-size: 1rem; color: #e0e0e0; }
+    .timeline-header .tl-meta { font-size: 0.78rem; color: #777; margin-top: 4px; }
+    .timeline-body { flex: 1; overflow-y: auto; padding: 16px; }
+    .chips-grid { display: flex; flex-wrap: wrap; gap: 14px; }
+    .chip-card { background: #13161f; border-radius: 10px; border: 2px solid #1e2130; cursor: pointer; width: 220px; transition: border-color 0.15s; flex-shrink: 0; }
+    .chip-card:hover { border-color: #c2501a; }
+    .chip-card img { width: 220px; height: 220px; display: block; object-fit: cover; border-radius: 8px 8px 0 0; background: #0a0a0a; }
+    .chip-info { padding: 8px 10px; }
+    .chip-date { font-size: 0.78rem; font-weight: 600; color: #f0a060; }
+    .chip-stats { font-size: 0.71rem; color: #888; margin-top: 3px; line-height: 1.5; }
+    .chip-flags { margin-top: 5px; display: flex; gap: 4px; flex-wrap: wrap; }
+
+    /* ── Lightbox ── */
+    #lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 100; align-items: center; justify-content: center; flex-direction: column; gap: 14px; }
+    #lightbox.open { display: flex; }
+    #lightbox img { max-width: 90vw; max-height: 82vh; border-radius: 10px; image-rendering: pixelated; }
+    #lightbox-meta { color: #ccc; font-size: 0.85rem; text-align: center; }
+    #lightbox-sub  { color: #777; font-size: 0.75rem; }
+    #lightbox-close { position: absolute; top: 20px; right: 26px; color: #aaa; font-size: 1.8rem; cursor: pointer; }
+
+    .empty-state   { color: #555; text-align: center; padding: 60px 20px; font-size: 0.9rem; }
+    .loading-state { color: #555; text-align: center; padding: 30px; font-size: 0.85rem; }
+
+    /* Resolution badge */
+    .res-badge { display: inline-block; background: #2d1a0a; color: #f0a060; border: 1px solid #5a3010; padding: 2px 10px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; }
+  </style>
+</head>
+<body>
+
+<div class="app-header">
+  <span class="app-title">Umbra Sub-Meter SAR Ships</span>
+  <div class="header-nav">
+    <a class="nav-btn" href="/">ATRNet</a>
+    <a class="nav-btn" href="/ships">ShipRS</a>
+    <a class="nav-btn" href="/opensar">OpenSAR</a>
+    <a class="nav-btn" href="/hrsid">HRSID</a>
+    <a class="nav-btn" href="/fusar">FUSAR</a>
+    <a class="nav-btn" href="/mstar">MSTAR</a>
+    <a class="nav-btn" href="/sar-ships">SAR Re-ID</a>
+    <a class="nav-btn active" href="/umbra-ships">Umbra</a>
+    <a class="nav-btn" href="/experiments">Experiments</a>
+  </div>
+</div>
+
+<div class="app-body">
+
+  <!-- Sidebar filters -->
+  <div class="sidebar">
+    <label>Region</label>
+    <select id="f-region" onchange="applyFilters()">
+      <option value="">All regions</option>
+      <option value="la">LA / Long Beach</option>
+      <option value="ny">NY / NJ Harbor</option>
+      <option value="savannah">Savannah</option>
+      <option value="chesapeake">Chesapeake</option>
+      <option value="puget">Puget Sound</option>
+    </select>
+
+    <label>Search Name</label>
+    <input type="text" id="f-name" placeholder="e.g. OLYMPUS"
+           oninput="applyFilters()">
+
+    <label>Vessel Type</label>
+    <select id="f-type" onchange="applyFilters()">
+      <option value="">All types</option>
+      <option value="cargo">Cargo / Container</option>
+      <option value="tanker">Tanker / LNG</option>
+      <option value="towing">Towing / Tug</option>
+      <option value="service">Service / Dredger</option>
+      <option value="other">Other</option>
+    </select>
+
+    <label>Min Length (m)</label>
+    <input type="range" id="f-length" min="50" max="400" step="25" value="100" oninput="onLengthChange()">
+    <div class="range-val"><span id="length-val">100</span> m</div>
+
+    <label>Min Passes</label>
+    <input type="range" id="f-passes" min="1" max="10" step="1" value="1" oninput="onPassesChange()">
+    <div class="range-val">≥ <span id="passes-val">1</span> pass</div>
+
+    <label>Sort by</label>
+    <select id="f-sort" onchange="applyFilters()">
+      <option value="passes">Most passes</option>
+      <option value="length">Longest ship</option>
+      <option value="name">Name A–Z</option>
+    </select>
+
+    <label style="margin-top:14px">Chip filter</label>
+    <label class="check-row">
+      <input type="checkbox" id="f-clean" onchange="applyFilters()"> Clean chips only
+    </label>
+    <label class="check-row">
+      <input type="checkbox" id="f-moving" onchange="applyFilters()"> Moving only (SOG ≥ 1kt)
+    </label>
+
+    <div class="count-lbl" id="count-lbl">Loading…</div>
+  </div>
+
+  <!-- Ship list -->
+  <div class="ship-list-wrap">
+    <div class="ship-list" id="ship-list">
+      <div class="loading-state">Loading ships…</div>
+    </div>
+  </div>
+
+  <!-- Chip timeline -->
+  <div class="timeline-wrap">
+    <div class="timeline-header" id="tl-header">
+      <h2>Select a ship to browse its Umbra SAR chips</h2>
+      <div class="tl-meta">
+        Chips are 1024×1024 px (~512m × 512m) at <span class="res-badge">~0.5m GSD</span>
+        · 20× finer than Sentinel-1 · amplitude (uint8) · log-compressed display
+      </div>
+    </div>
+    <div class="timeline-body">
+      <div class="chips-grid" id="chips-grid">
+        <div class="empty-state">← Choose a ship to see how it looks across Umbra satellite passes</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" onclick="closeLightbox()">
+  <span id="lightbox-close">×</span>
+  <img id="lb-img" src="" alt="">
+  <div id="lightbox-meta"></div>
+  <div id="lightbox-sub">1024×1024 px · ~512m × 512m · click or Esc to close</div>
+</div>
+
+<script>
+let allShips = [];
+let resolvedLabels = {};
+let selectedMmsi = null;
+
+async function loadShips() {
+  const [shipResp, labelResp] = await Promise.all([
+    fetch('/api/umbra/ships'),
+    fetch('/api/umbra/labels'),
+  ]);
+  const shipData  = await shipResp.json();
+  resolvedLabels  = await labelResp.json();
+  allShips = shipData.ships;
+  applyFilters();
+}
+
+function typeKey(vtype) {
+  const v = parseInt(vtype);
+  if (v >= 70 && v <= 79) return 'cargo';
+  if (v >= 80 && v <= 89) return 'tanker';
+  if (v >= 30 && v <= 32) return 'towing';
+  if (v >= 50 && v <= 59) return 'service';
+  return 'other';
+}
+function typeLabel(vtype) {
+  return {cargo:'Cargo', tanker:'Tanker', towing:'Towing', service:'Service', other:'Other'}[typeKey(vtype)] || 'Other';
+}
+function typeBadgeClass(vtype) {
+  const m = {cargo:'badge-cargo', tanker:'badge-tanker', towing:'badge-towing', service:'badge-other', other:'badge-other'};
+  return m[typeKey(vtype)] || 'badge-other';
+}
+
+const REGION_LABEL = {la:'LA', ny:'NY', savannah:'SAV', chesapeake:'CHE', puget:'PGT'};
+
+function applyFilters() {
+  const regionFilter = document.getElementById('f-region').value;
+  const typeFilter   = document.getElementById('f-type').value;
+  const minLength    = parseInt(document.getElementById('f-length').value);
+  const minPasses    = parseInt(document.getElementById('f-passes').value);
+  const sortBy       = document.getElementById('f-sort').value;
+  const cleanOnly    = document.getElementById('f-clean').checked;
+  const movingOnly   = document.getElementById('f-moving').checked;
+  const nameFilter   = document.getElementById('f-name').value.trim().toUpperCase();
+
+  let ships = allShips.filter(s => {
+    if (regionFilter && !(s.regions || []).includes(regionFilter)) return false;
+    if (nameFilter && !(s.vessel_name || '').toUpperCase().includes(nameFilter)) return false;
+    if (typeFilter && typeKey(s.vessel_type) !== typeFilter) return false;
+    if (s.length_m < minLength) return false;
+    const passes = cleanOnly ? s.clean_passes : s.passes;
+    if (passes < minPasses) return false;
+    if (movingOnly && s.max_sog < 1) return false;
+    return true;
+  });
+
+  if (sortBy === 'passes') ships.sort((a,b) => b.passes - a.passes);
+  else if (sortBy === 'length') ships.sort((a,b) => b.length_m - a.length_m);
+  else ships.sort((a,b) => (a.vessel_name||'').localeCompare(b.vessel_name||''));
+
+  document.getElementById('count-lbl').textContent = `${ships.length} ships`;
+  renderShipList(ships);
+}
+
+function onLengthChange() {
+  document.getElementById('length-val').textContent = document.getElementById('f-length').value;
+  applyFilters();
+}
+function onPassesChange() {
+  document.getElementById('passes-val').textContent = document.getElementById('f-passes').value;
+  applyFilters();
+}
+
+function renderShipList(ships) {
+  const el = document.getElementById('ship-list');
+  if (ships.length === 0) {
+    el.innerHTML = '<div class="empty-state">No ships match filters</div>';
+    return;
+  }
+  el.innerHTML = ships.map(s => {
+    const bc = typeBadgeClass(s.vessel_type);
+    const tl = typeLabel(s.vessel_type);
+    const cleanBadge = s.clean_passes > 0
+      ? `<span class="clean-badge">✓ ${s.clean_passes} clean</span>`
+      : `<span class="dirty-badge">all dense</span>`;
+    const regionBadges = (s.regions || []).map(r =>
+      `<span class="badge-${r}">${REGION_LABEL[r] || r}</span>`).join('');
+    const lbl = resolvedLabels[String(s.mmsi)];
+    const labelBadge = lbl && lbl.label !== 'Unresolved'
+      ? `<span style="padding:1px 7px;border-radius:10px;font-size:0.68rem;font-weight:600;
+           background:${lbl.confidence==='HIGH'?'#1a3d1a':'#2d2d00'};
+           color:${lbl.confidence==='HIGH'?'#4ade80':'#facc15'}"
+         title="${lbl.confidence} confidence">${lbl.label}</span>`
+      : '';
+    return `
+      <div class="ship-card ${s.mmsi === selectedMmsi ? 'selected' : ''}"
+           onclick="selectShip(${s.mmsi})" data-mmsi="${s.mmsi}">
+        <div class="ship-name">${s.vessel_name || 'Unknown'}</div>
+        <div class="ship-meta">
+          <span class="badge ${bc}">${tl}</span>
+          <span>${s.length_m ? Math.round(s.length_m)+'m' : '—'}</span>
+          <span class="passes-badge">${s.passes} pass${s.passes>1?'es':''}</span>
+          ${labelBadge}${cleanBadge}${regionBadges}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function selectShip(mmsi) {
+  selectedMmsi = mmsi;
+  document.querySelectorAll('.ship-card').forEach(c => {
+    c.classList.toggle('selected', parseInt(c.dataset.mmsi) === mmsi);
+  });
+
+  const ship = allShips.find(s => s.mmsi === mmsi);
+  const lbl  = resolvedLabels[String(mmsi)];
+  const lblStr = lbl && lbl.label !== 'Unresolved'
+    ? ` · <strong style="color:${lbl.confidence==='HIGH'?'#4ade80':'#facc15'}">${lbl.label}</strong> <span style="color:#666;font-size:0.75rem">(${lbl.confidence})</span>`
+    : '';
+  document.getElementById('tl-header').innerHTML = `
+    <h2>${ship.vessel_name || 'Unknown'} <span style="color:#666;font-size:0.75rem">MMSI ${mmsi}</span></h2>
+    <div class="tl-meta">
+      ${ship.length_m ? Math.round(ship.length_m)+'m' : '—'} ·
+      ${typeLabel(ship.vessel_type)}${lblStr} ·
+      ${ship.passes} Umbra pass${ship.passes>1?'es':''}  ·
+      ${ship.clean_passes} clean  ·
+      <span class="res-badge">~0.5m GSD</span>
+    </div>`;
+
+  const grid = document.getElementById('chips-grid');
+  grid.innerHTML = '<div class="loading-state">Loading chips…</div>';
+
+  const resp = await fetch(`/api/umbra/ship/${mmsi}`);
+  const data = await resp.json();
+  renderChips(data.chips);
+}
+
+function renderChips(chips) {
+  const grid = document.getElementById('chips-grid');
+  if (!chips || chips.length === 0) {
+    grid.innerHTML = '<div class="empty-state">No chips found</div>';
+    return;
+  }
+  chips.sort((a,b) => a.acq_time.localeCompare(b.acq_time));
+  grid.innerHTML = chips.map((c, i) => {
+    const date = c.acq_time.substring(0, 10);
+    const time = c.acq_time.substring(11, 16);
+    const sog  = parseFloat(c.sog || 0).toFixed(1);
+    const hdg  = c.heading > 0 ? Math.round(c.heading) + '°' : '—';
+    const cleanFlag = c.clean
+      ? '<span class="clean-badge">✓ clean</span>'
+      : `<span class="dirty-badge">${c.n_other_large} nearby</span>`;
+    const movingFlag = parseFloat(c.sog) >= 1
+      ? `<span class="passes-badge">${sog} kt</span>`
+      : '<span style="padding:1px 7px;border-radius:10px;font-size:0.68rem;background:#1e1e3d;color:#818cf8">⚓ anchored</span>';
+    const regionBadge = `<span class="badge-${c.region}">${REGION_LABEL[c.region]||c.region}</span>`;
+    const ship2 = allShips.find(s => s.mmsi === selectedMmsi);
+    const lenParam = ship2 && ship2.length_m ? `&length=${Math.round(ship2.length_m)}` : '';
+    return `
+      <div class="chip-card" onclick="openLightbox('${c.chip_key}','${c.vessel_name} · ${date} ${time}Z',${ship2 ? ship2.length_m : 0})">
+        <img src="/umbra-chip/${c.chip_key}?zoom=1&size=220${lenParam}" loading="lazy" alt="${date}">
+        <div class="chip-info">
+          <div class="chip-date">${date} <span style="color:#666">${time}Z</span></div>
+          <div class="chip-stats">hdg ${hdg} · dt ${Math.round(c.dt_sec)}s from SAR</div>
+          <div class="chip-flags">${movingFlag}${cleanFlag}${regionBadge}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function openLightbox(chipKey, label, length_m) {
+  const lenParam = length_m ? `&length=${Math.round(length_m)}` : '';
+  document.getElementById('lb-img').src = `/umbra-chip/${chipKey}?zoom=1&size=768${lenParam}`;
+  document.getElementById('lightbox-meta').textContent = label;
+  document.getElementById('lightbox').classList.add('open');
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+loadShips();
+</script>
+</body>
+</html>

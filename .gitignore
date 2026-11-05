@@ -13,3 +13,7 @@ logs/
 nohup*.out
 nohup.out
 gulf_urls*.txt
+
+# personal / OS markers
+terrasarPersonalData.pdf
+.metadata_never_index
