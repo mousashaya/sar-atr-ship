@@ -17,3 +17,7 @@ gulf_urls*.txt
 # personal / OS markers
 terrasarPersonalData.pdf
 .metadata_never_index
+
+# Personal data (TerraSAR-X forms) - never commit
+Template_for_TerraSAR-X_proposal_submission-form-*.pdf
+terrasarPersonalData.pdf
