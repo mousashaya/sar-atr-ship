@@ -21,3 +21,9 @@ terrasarPersonalData.pdf
 # Personal data (TerraSAR-X forms) - never commit
 Template_for_TerraSAR-X_proposal_submission-form-*.pdf
 terrasarPersonalData.pdf
+# Private notes / other projects - keep local
+lichen_hierarchy_draft.md
+sbir_opportunities.md
+linkedin_post.md
+TODO.md
+paper_dlr_proposal.md
