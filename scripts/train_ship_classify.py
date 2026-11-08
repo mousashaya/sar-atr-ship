@@ -35,6 +35,9 @@ parser.add_argument('--max-chips',  type=int, default=None,
                     help='Cap chips per class (same cap for all classes)')
 parser.add_argument('--match-slc',  action='store_true',
                     help='Cap GRD per class to match SLC HIGH 3-class counts (944/287/52)')
+parser.add_argument('--group-split', action='store_true',
+                    help='Split by vessel (MMSI) so no ship appears in two splits (fixes chip-level leak)')
+parser.add_argument('--seed', type=int, default=42, help='Random seed (split + init)')
 args = parser.parse_args()
 
 sensor_tag   = 'grd' if args.grd else 'slc'
@@ -43,6 +46,7 @@ class_tag    = '3cls' if args.three_class else '4cls'
 backbone_tag = args.backbone
 labels_tag   = 'aisonly' if (args.labels and 'ais_only' in args.labels) else 'resolved'
 cap_tag      = '_matchslc' if args.match_slc else (f'_cap{args.max_chips}' if args.max_chips else '')
+cap_tag     += ('_mmsisplit' if args.group_split else '') + (f'_s{args.seed}' if args.seed != 42 else '')
 run_tag      = f'{sensor_tag}_{conf_tag}_{class_tag}_{backbone_tag}_{labels_tag}{cap_tag}'
 
 if args.grd:
@@ -56,7 +60,7 @@ MODELS_DIR = Path(f'models/saved/ship_classify_{run_tag}')
 LOGS_DIR   = Path(f'logs/ship_classify_{run_tag}')
 
 LABELS_PATH    = Path(args.labels) if args.labels else Path('data/resolved_labels.json')
-SEED           = 42
+SEED           = args.seed
 EPOCHS         = 30
 LR             = 1e-4
 BACKBONE_LR_SCALE = 0.1
@@ -136,6 +140,8 @@ class ChipDataset(Dataset):
         return t, label
 
 
+MMSI_OF = {}
+
 def scan_and_split():
     by_class = defaultdict(list)
     for npz in sorted(CHIPS_DIR.glob('**/*.npz')):
@@ -149,6 +155,7 @@ def scan_and_split():
             if cls not in CLASS_TO_IDX:
                 continue
             by_class[cls].append(npz)
+            MMSI_OF[npz] = mmsi
         except Exception:
             continue
 
@@ -171,6 +178,19 @@ def scan_and_split():
         elif args.max_chips:
             paths = paths[:args.max_chips]
             print(f"  Capping {cls} at {args.max_chips} chips")
+        idx    = CLASS_TO_IDX[cls]
+        if args.group_split:
+            # whole vessels go to one split; fill val/test to ~15% of chips each
+            groups = defaultdict(list)
+            for p in paths: groups[MMSI_OF[p]].append(p)
+            mmsis = sorted(groups); random.shuffle(mmsis)
+            n = len(paths); bucket = [val, test, train]; tgt = [0.15*n, 0.15*n]; got = [0, 0]
+            for m in mmsis:
+                k = 0 if got[0] < tgt[0] else (1 if got[1] < tgt[1] else 2)
+                bucket[k] += [(p, idx) for p in groups[m]]
+                if k < 2: got[k] += len(groups[m])
+            print(f"  {cls}: {len(mmsis)} vessels -> val {got[0]} / test {got[1]} chips")
+            continue
         n      = len(paths)
         n_val  = max(1, int(n * 0.15))
         n_test = max(1, int(n * 0.15))
@@ -320,7 +340,10 @@ def main():
             print(f"    {cls:15s}: {per_correct[i]/per_total[i]*100:.1f}%  ({per_total[i]} chips)")
     print(f"{'='*55}\n")
 
-    json.dump({'test_oa': test_oa, 'test_f1': test_f1, 'history': history},
+    json.dump({'test_oa': test_oa, 'test_f1': test_f1, 'history': history,
+               'group_split': args.group_split, 'seed': SEED,
+               'n_test_vessels': len({MMSI_OF[p] for p, _ in test_recs}),
+               'per_class_test': {c: [int(per_correct[i]), int(per_total[i])] for i, c in enumerate(CLASS_NAMES)}},
               open(LOGS_DIR / 'results.json', 'w'), indent=2)
 
 

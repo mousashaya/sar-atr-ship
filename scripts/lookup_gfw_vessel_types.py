@@ -18,7 +18,9 @@ from collections import Counter
 import numpy as np
 import requests
 
-CHIPS_DIR = '/Volumes/Machine Learning/sar_ship_chips_slc_gulf'
+import sys
+# extra chip dirs can be passed as arguments (e.g. other regions); default = SLC Gulf
+CHIP_DIRS = sys.argv[1:] or ['/Volumes/Machine Learning/sar_ship_chips_slc_gulf']
 OUT_PATH  = 'data/gfw_vessel_types.json'
 API_KEY   = os.environ.get('GFW_API_KEY', '')
 BASE_URL  = 'https://gateway.api.globalfishingwatch.org/v3/vessels/search'
@@ -40,7 +42,7 @@ else:
 # Collect unique MMSIs
 print("Scanning chips for unique MMSIs...")
 mmsis = set()
-for npz in glob.glob(f'{CHIPS_DIR}/**/*.npz', recursive=True):
+for npz in (f for d in CHIP_DIRS for f in glob.glob(f'{d}/**/*.npz', recursive=True)):
     try:
         mmsis.add(int(np.load(npz, allow_pickle=True)['mmsi']))
     except Exception:

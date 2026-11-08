@@ -48,6 +48,16 @@ REGIONS = {
                        ais_dir='ais_chesapeake',  out_dir='sar_ship_chips_chesapeake'),
     'Puget':      dict(name='Puget Sound',     scene_dir='sentinel1_puget',
                        ais_dir='ais_puget',         out_dir='sar_ship_chips_puget'),
+    'NewEngland': dict(name='New England', scene_dir='sentinel1_newengland',
+                       ais_dir='ais_newengland', out_dir='sar_ship_chips_newengland'),
+    'GulfEast': dict(name='Central Gulf LA/MS', scene_dir='sentinel1_gulfeast',
+                       ais_dir='ais_gulfeast', out_dir='sar_ship_chips_gulfeast'),
+    'Oregon': dict(name='Oregon/Columbia River', scene_dir='sentinel1_oregon',
+                       ais_dir='ais_oregon', out_dir='sar_ship_chips_oregon'),
+    'Hawaii': dict(name='Hawaii', scene_dir='sentinel1_hawaii',
+                       ais_dir='ais_hawaii', out_dir='sar_ship_chips_hawaii'),
+    'GulfOpen':   dict(name='Gulf open water (paper box)', scene_dir='sentinel1_gulfopen',
+                       ais_dir='ais_gulfopen', out_dir='sar_ship_chips_gulfopen'),
     'Norway':     dict(name='Norwegian Coast', scene_dir='sentinel1_norway',
                        ais_dir='ais_norway',         out_dir='sar_ship_chips_norway'),
 }
@@ -238,18 +248,24 @@ def process_scene(safe_path, ais_dir, out_base, backbone_out=None, n_backbone=0)
 
 
 def main():
+    global MIN_LENGTH
     parser = argparse.ArgumentParser()
     parser.add_argument('--region', required=True, choices=list(REGIONS.keys()))
     parser.add_argument('--delete-scenes', action='store_true',
                         help='Delete each .SAFE directory after chipping it')
     parser.add_argument('--backbone-patches', type=int, default=BACKBONE_PATCHES_DEFAULT,
                         help='Random background patches per scene for backbone pre-training (0 to disable)')
+    parser.add_argument('--min-length', type=float, default=50.0,
+                        help='Minimum AIS length (m) to chip (default 50; 25 keeps fishing boats/tugs)')
+    parser.add_argument('--scene-dir', default=None, help='override scene folder name')
+    parser.add_argument('--out-dir', default=None, help='override chip folder name (e.g. sar_ship_chips_la_2025)')
     args = parser.parse_args()
+    MIN_LENGTH = args.min_length
 
     r           = REGIONS[args.region]
-    scene_dir   = ML_BASE / r['scene_dir']
+    scene_dir   = ML_BASE / (args.scene_dir or r['scene_dir'])
     ais_dir     = ML_BASE / r['ais_dir']
-    out_base    = ML_BASE / r['out_dir']
+    out_base    = ML_BASE / (args.out_dir or r['out_dir'])
     backbone_out = ML_BASE / f"sar_backbone_patches" if args.backbone_patches > 0 else None
     out_base.mkdir(exist_ok=True)
 

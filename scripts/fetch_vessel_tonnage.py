@@ -1,5 +1,8 @@
 """
-Fetch DWT and gross tonnage for all vessels in GFW data via VesselAPI.
+Fetch registry type, size and tonnage for every vessel in our SAR chips via VesselAPI.
+(2026-11-08: fixed parsing - the API nests fields under "vessel"; the old version saved all-null records.
+ Errors are no longer cached, so a resume retries them; an auth failure aborts the run.)
+VesselAPI ToS section 3A: keep this cache local, never redistribute raw records; delete an MMSI on owner objection.
 Saves results to data/vessel_tonnage.json.
 
 Usage:
@@ -19,7 +22,7 @@ from pathlib import Path
 
 import requests
 
-GFW_PATH    = 'data/gfw_vessel_types.json'
+LABELS_PATH = 'data/resolved_labels_v2.json'
 OUT_PATH    = 'data/vessel_tonnage.json'
 BASE_URL    = 'https://api.vesselapi.com/v1'
 DELAY_S     = 1.5   # seconds between requests — stay within free tier limits
@@ -38,16 +41,17 @@ def fetch_tonnage(mmsi: str, session: requests.Session) -> dict:
     if resp.status_code == 404:
         return {'mmsi': mmsi, 'found': False}
     resp.raise_for_status()
-    data = resp.json()
+    data = resp.json().get('vessel') or {}
     return {
         'mmsi':               mmsi,
-        'found':              True,
-        'deadweight_tonnage': data.get('deadweight_tonnage'),
-        'gross_tonnage':      data.get('gross_tonnage'),
+        'found':              bool(data),
         'vessel_type':        data.get('vessel_type'),
-        'name':               data.get('name'),
         'imo':                data.get('imo'),
+        'name':               data.get('name'),
         'length':             data.get('length'),
+        'breadth':            data.get('breadth'),
+        'gross_tonnage':      data.get('gross_tonnage'),
+        'deadweight_tonnage': data.get('deadweight_tonnage'),
         'year_built':         data.get('year_built'),
     }
 
@@ -57,10 +61,8 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
 
-    with open(GFW_PATH) as f:
-        gfw = json.load(f)
-
-    mmsis = [k for k, v in gfw.items() if v is not None]
+    with open(LABELS_PATH) as f:
+        mmsis = sorted(json.load(f))
     print(f"Vessels to query: {len(mmsis)}")
 
     if args.dry_run:
@@ -112,28 +114,30 @@ def main():
                 except Exception as e2:
                     errors += 1
                     print(f"  WARNING: MMSI {mmsi} failed after retry — {e2}")
-                    out[mmsi] = {'mmsi': mmsi, 'found': False, 'error': str(e2)}
+            elif e.response is not None and e.response.status_code in (401, 403):
+                print(f"  AUTH FAILURE ({e.response.status_code}): {e.response.text[:200]} — stopping")
+                break
             else:
                 errors += 1
                 print(f"  WARNING: MMSI {mmsi} failed — {e}")
-                out[mmsi] = {'mmsi': mmsi, 'found': False, 'error': str(e)}
                 time.sleep(DELAY_S * 2)
         except Exception as e:
             errors += 1
             print(f"  WARNING: MMSI {mmsi} failed — {e}")
-            out[mmsi] = {'mmsi': mmsi, 'found': False, 'error': str(e)}
             time.sleep(DELAY_S * 2)
 
     with open(OUT_PATH, 'w') as f:
         json.dump(out, f, indent=2)
 
     found     = sum(1 for v in out.values() if v.get('found'))
+    has_type  = sum(1 for v in out.values() if v.get('vessel_type'))
     has_dwt   = sum(1 for v in out.values() if v.get('deadweight_tonnage'))
     has_gt    = sum(1 for v in out.values() if v.get('gross_tonnage'))
 
     print(f"\n{'='*50}")
     print(f"  Total queried:  {len(out)}")
     print(f"  Found:          {found} ({found/len(out)*100:.1f}%)")
+    print(f"  Has type:       {has_type} ({has_type/len(out)*100:.1f}%)")
     print(f"  Has DWT:        {has_dwt} ({has_dwt/len(out)*100:.1f}%)")
     print(f"  Has gross ton:  {has_gt} ({has_gt/len(out)*100:.1f}%)")
     print(f"  Errors:         {errors}")
